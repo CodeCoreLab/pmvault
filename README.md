@@ -1,5 +1,7 @@
 # pmvault — 密码管理器
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-8a2be2.svg)](LICENSE)[![Releases](https://img.shields.io/badge/Releases-latest-blue.svg)](https://github.com/CodeCoreLab/pmvault/releases)[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D4.svg)]
+
 Windows 本地单机密码保险箱。AES-256-GCM 认证加密 + Argon2id 密钥派生，
 主密钥不落盘、明文不出进程；仅监听回环地址，闲置 15 分钟自动上锁。
 单文件 exe，双击即用，无需安装与联网。

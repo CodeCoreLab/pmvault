@@ -1,0 +1,20 @@
+name: 其他反馈
+description: 提问、讨论，或上述模板都不适用的情况
+title: ""
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这个模板用于提问、讨论，或者上面两个模板都不适用的情况。
+
+        如果你只是想问「怎么用」，请先看对应项目的 README 的「配置说明」与
+        「常见问题」章节——大部分使用问题在那里已经有答案。
+
+  - type: textarea
+    id: content
+    attributes:
+      label: 你的问题或反馈
+      description: 请尽量提供足够的上下文：项目、版本、操作系统、你想做什么
+    validations:
+      required: true

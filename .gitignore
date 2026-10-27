@@ -1,53 +1,107 @@
 # ---------------------------------------------------------------------------
-# pmvault — 密码管理器
+# xmtool monorepo — 根 .gitignore
 #
-# 根仓库的 .gitignore 已覆盖通用规则，本文件只补充本项目特有的规则。
+# 原则：仓库只收录「源码 + 文档 + 配置」。构建产物、运行期数据、第三方
+# 二进制依赖一律不入库，通过 CI 构建或 GitHub Release 分发。
 # ---------------------------------------------------------------------------
 
-# --- 运行期数据（保险箱：含加密后的密文库与备份，绝不入库） ----------------
+# --- 通用编辑器 / IDE ---------------------------------------------------
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.swp
+*~
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# --- 编译产物 ------------------------------------------------------------
+bin/
+obj/
+target/
+build/
+dist/
+*.o
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.class
+*.pyc
+__pycache__/
+*.pyo
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# --- 可执行文件 / 安装包（走 GitHub Release 分发） ----------------------
+*.exe
+*.dll
+*.msi
+*.zip
+*.7z
+*.tar.gz
+*.deb
+*.rpm
+*.apk
+*.app
+*.dmg
+
+# --- 第三方二进制依赖（vendored，不入库；版本清单见各项目 THIRD-PARTY-NOTICES.md） ---
+libs/
+analyzers/
+*.snk
+
+# --- 运行期数据 / 日志 / 备份（含用户凭据，绝不入库） --------------------
 data/
+logs/
+backup/
+run/
+releases/
 *.db
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
 *.bak
-*.vault
+*.log
+data.js
+data.bak.js
+*.import-failed
+!*/docs/_evidence/**
+!*/docs/**/evidence/**
+
+# --- 归档 / 备份目录 ----------------------------------------------------
+.migrate_bak/
+_archive_*/
+_archive/
+*.bak_*
+
+# --- 发布与运维内部产物 -------------------------------------------------
+.publish/
+.deploy/
+.snapshots/
+
+# --- 凭据（保险箱：最后一道闸） ------------------------------------------
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
 *.cvault
 
-# --- 备份目录（备份是完整的密文库副本，含全部条目） ------------------------
-backup/
-backups/
-emergency_backup_*.db
-backup_*.db
-
-# --- 日志 ---------------------------------------------------------------
-logs/
-*.log
-
-# --- Go 构建产物 ---------------------------------------------------------
-/src/phase-a/vaultd
-/src/phase-a/vaultd.exe
-/src/phase-edgeapp/vaultgui
-/src/phase-edgeapp/vaultgui.exe
-*.exe
-*.syso.tmp
-
-# --- 打包中间产物 -------------------------------------------------------
-/src/phase-a/dist/
-/src/phase-edgeapp/dist/
-*.zip
-*.7z
-
-# --- Python 脚本缓存 ----------------------------------------------------
-__pycache__/
-*.pyc
-
-# --- 编辑器 -------------------------------------------------------------
-.vs/
-.vscode/
-.idea/
-*.swp
-*~
-Thumbs.db
-desktop.ini
+# --- 临时文件 -----------------------------------------------------------
+*.tmp
+*.log.*
+.tmp/
+tmp/

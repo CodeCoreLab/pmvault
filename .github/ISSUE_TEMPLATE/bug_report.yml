@@ -1,0 +1,83 @@
+name: Bug 反馈
+description: 报告一个可复现的缺陷
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请先确认这个缺陷在最新版本上仍然存在。
+
+        **安全漏洞请勿在此报告**，见 [SECURITY.md](../SECURITY.md) 的私下报告流程。
+
+  - type: dropdown
+    id: project
+    attributes:
+      label: 受影响的项目
+      options:
+        - xmtool（小马远程桌面）
+        - pmvault（密码管理器）
+        - work-reminder（工作提醒助手）
+        - team-planner（团队协作台）
+        - 仓库级（文档 / CI / 构建）
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 发布版本号或 commit SHA
+      placeholder: v1.0.5 / a15ddd5
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统与运行环境
+      description: 系统版本、运行时版本（.NET / Go / Rust / 浏览器）
+      placeholder: Windows 11 23H2 · .NET 8.0.32
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 期望的行为 vs 实际的行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 如何复现
+      description: 编号列出复现步骤，越具体越好
+      placeholder: |
+        1. 打开 ……
+        2. 点击 ……
+        3. 观察到 ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误日志或截图
+      description: 如有报错信息请原样贴出（注意先移除其中的凭据与个人路径）
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 我已确认该问题在最新版本上仍然存在
+          required: true
+        - label: 我已搜索过现有 Issue，没有找到相同问题
+          required: true
+        - label: 我已移除日志/截图中的敏感信息
+          required: false

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 报告安全漏洞
+    url: https://github.com/your-org/xmtool/security/advisories/new
+    about: 请勿用公开 Issue 报告安全问题，详见 SECURITY.md
+  - name: 行为准则
+    url: https://github.com/your-org/xmtool/blob/main/CODE_OF_CONDUCT.md
+    about: 参与本项目即表示同意行为准则
+  - name: 路线图与计划
+    url: https://github.com/your-org/xmtool/blob/main/ROADMAP.md
+    about: 查看各项目的计划方向与「已明确不做的事」
