@@ -17,12 +17,13 @@ import os
 import socket
 import sys
 import tarfile
+import tempfile
 
 import paramiko
 
 HOST = "example-jump-host"
 KEY = str(Path.home() / ".ssh" / "id_workbuddy")
-LOCAL_OUT = r"C:\Users\Administrator\AppData\Local\Temp\xbuild_out"
+LOCAL_OUT = os.path.join(tempfile.gettempdir(), "xbuild_out")
 
 GO_ENV = ("export PATH=/opt/go/bin:$PATH GOPATH=/opt/gopath GOCACHE=/opt/gocache "
           "GOPROXY=https://goproxy.cn,direct GOFLAGS=-mod=mod;")

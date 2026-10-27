@@ -13,14 +13,17 @@ import io
 import os
 import socket
 import sys
+import tempfile
 import tarfile
 
 import paramiko
 
 HOST = "example-jump-host"
 KEY = str(Path.home() / ".ssh" / "id_workbuddy")
-SRC = r"E:\WorkBuddy\2026-10-21-10-27-34\重构验证\phase-a"
-OUT = r"C:\Users\Administrator\AppData\Local\Temp\xbuild_out"
+# 以脚本自身位置推导源码目录，输出走系统临时目录
+_HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(os.path.dirname(_HERE), "phase-a")
+OUT = os.path.join(tempfile.gettempdir(), "xbuild_out")
 GO_ENV = ("export PATH=/opt/go/bin:$PATH GOPATH=/opt/gopath GOCACHE=/opt/gocache "
           "GOPROXY=https://goproxy.cn,direct GOFLAGS=-mod=mod;")
 

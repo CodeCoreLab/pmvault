@@ -16,6 +16,7 @@ import io
 import os
 import socket
 import sys
+import tempfile
 import tarfile
 
 import paramiko
@@ -23,7 +24,9 @@ import paramiko
 JUMP = "example-jump-host"
 TEST = "example-test-host"
 KEY = str(Path.home() / ".ssh" / "id_workbuddy")
-SRC = r"E:\WorkBuddy\2026-10-21-10-27-34\重构验证\phase-a"
+# 以脚本自身位置推导源码目录，避免硬编码绝对路径在迁移后失效
+_HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(os.path.dirname(_HERE), "phase-a")
 GO_ENV = ("export PATH=/opt/go/bin:$PATH GOPATH=/opt/gopath GOCACHE=/opt/gocache "
           "GOPROXY=https://goproxy.cn,direct GOFLAGS=-mod=mod;")
 
@@ -103,7 +106,7 @@ def main() -> int:
               "&& ls -la /tmp/vendor_pack.tar.gz | awk '{print \"vendor包=\"$5\" 字节\"}'", 200)
 
     # 拉取 vendor 包到本机，再推到测试机
-    local_vp = os.path.join(r"C:\Users\Administrator\AppData\Local\Temp", "vendor_pack.tar.gz")
+    local_vp = os.path.join(tempfile.gettempdir(), "vendor_pack.tar.gz")
     sftp = jump.open_sftp()
     sftp.get("/tmp/vendor_pack.tar.gz", local_vp)
     sftp.close()

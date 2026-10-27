@@ -10,8 +10,10 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
-ROOT = r"E:\WorkBuddy\2026-10-21-10-27-34"
-PAGE = "file:///" + os.path.join(ROOT, "密码管理器-产品介绍页.html").replace("\\", "/")
+# 以脚本自身位置推导仓库根，避免硬编码绝对路径在迁移后失效
+_HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(_HERE)
+PAGE = "file:///" + os.path.join(ROOT, "docs", "密码管理器-产品介绍页.html").replace("\\", "/")
 OUT = os.path.join(os.environ["TEMP"], "pp_shot")
 os.makedirs(OUT, exist_ok=True)
 

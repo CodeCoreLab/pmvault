@@ -14,7 +14,10 @@ import urllib.error
 import urllib.request
 import zipfile
 
-ZIP = r"E:\WorkBuddy\2026-10-21-10-27-34\密码管理器-原生窗口版-Windows.zip"
+# 以脚本自身位置推导仓库根，避免硬编码绝对路径在迁移后失效
+_HERE = os.path.dirname(os.path.abspath(__file__))
+ZIP = os.path.join(os.path.dirname(os.path.dirname(_HERE)),
+                 "releases", "密码管理器-原生窗口版-Windows.zip")
 DEST = os.path.join(os.environ["TEMP"], "verify_native")
 PKG_DIR = "密码管理器-原生窗口版"
 results = []

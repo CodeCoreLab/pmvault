@@ -17,7 +17,9 @@ import sys
 
 from PIL import Image, ImageDraw
 
-OUT_DIR = r"E:\WorkBuddy\2026-10-21-10-27-34\重构验证\phase-edgeapp\cmd\vaultgui"
+# 以脚本自身位置推导工程根，避免硬编码绝对路径在迁移后失效
+_HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.path.join(_HERE, "phase-edgeapp", "cmd", "vaultgui")
 ICO_PATH = os.path.join(OUT_DIR, "app.ico")
 SYSO_PATH = os.path.join(OUT_DIR, "rsrc_windows_amd64.syso")
 

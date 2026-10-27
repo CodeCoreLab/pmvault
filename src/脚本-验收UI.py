@@ -26,8 +26,10 @@ import zipfile
 
 from playwright.sync_api import sync_playwright
 
-ROOT = r"E:\WorkBuddy\2026-10-21-10-27-34"
-ZIP = os.path.join(ROOT, "密码管理器-桌面版-Windows.zip")
+# 以脚本自身位置推导仓库根，避免硬编码绝对路径在迁移后失效
+_HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(_HERE)
+ZIP = os.path.join(ROOT, "releases", "密码管理器-桌面版-Windows.zip")
 PKG = "密码管理器-桌面版"
 WORK = os.path.join(os.environ["TEMP"], "ui_e2e")
 

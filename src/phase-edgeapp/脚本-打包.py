@@ -33,8 +33,10 @@ import struct
 import sys
 import zipfile
 
-SRC = r"E:\WorkBuddy\2026-10-21-10-27-34\重构验证\phase-edgeapp"
-OUT = r"E:\WorkBuddy\2026-10-21-10-27-34"
+# 以脚本自身位置推导工程根与产物目录，避免硬编码绝对路径在迁移后失效
+_HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = _HERE
+OUT = os.path.dirname(os.path.dirname(_HERE))
 # 构建产物就地放在项目内，不依赖 %TEMP%（临时目录会被系统清理，脚本会突然找不到 exe）
 EXE = os.path.join(SRC, "dist-windows", "vaultgui.exe")
 ICO = os.path.join(SRC, "cmd", "vaultgui", "app.ico")

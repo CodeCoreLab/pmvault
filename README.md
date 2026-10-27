@@ -116,8 +116,18 @@ cd src\phase-edgeapp && go test ./...
 CGO_ENABLED=1 go test -race ./internal/vault/
 ```
 
-## 迁移说明
+## 目录约定
 
-本项目 2026-10-22 从 `E:\WorkBuddy\2026-10-21-10-27-34\` 迁入。
-原工作目录中的制品为迁移来源，独立备份位于
-`E:\WorkBuddy\_migrate_backup_20261022_135036\pmvault\`。
+```
+pmvault/
+├── src/
+│   ├── phase-a/                浏览器版（Go，Subsystem=2，控制台程序）
+│   ├── phase-edgeapp/          桌面版（Go，-H windowsgui，Edge/Chrome 承载）
+│   ├── 脚本-*.py               图标生成、双包验收、UI 端到端验收
+│   └── 跨平台编译/             跨平台构建实验
+├── docs/                       产品页 + 设计与评估报告
+└── releases/                   发布的 zip 包
+```
+
+> `src/脚本-*.py` 中的路径一律**基于脚本自身位置解析**（`os.path.dirname(os.path.abspath(__file__))`），
+> 不含硬编码绝对路径——这样整个目录搬到任何位置都能直接跑。

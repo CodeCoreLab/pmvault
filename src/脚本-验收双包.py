@@ -24,7 +24,9 @@ import urllib.error
 import urllib.request
 import zipfile
 
-ROOT = r"E:\WorkBuddy\2026-10-21-10-27-34"
+# 以脚本自身位置推导仓库根，避免硬编码绝对路径在迁移后失效
+_HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(_HERE)
 OP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 fails = []
 
