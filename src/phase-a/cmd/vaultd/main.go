@@ -174,12 +174,15 @@ func fatal(msg string, err error) {
 	os.Exit(1)
 }
 
-// fatalBox 用系统原生弹窗告知启动失败（Windows）/ 写 stderr（其他平台）。
+// fatalBox 用系统原生弹窗告知启动失败（Windows / macOS）/ 写 stderr（其他平台）。
 //
 // 早先用 mshta 拼 JS 弹窗，有两个问题：会额外起一个子进程，
 // 且企业环境常禁用 mshta。改用 user32!MessageBoxW，无额外进程。
+//
+// macOS 走 osascript 的 display alert：从 Finder 双击 .app 启动时没有终端，
+// stderr 用户看不到，必须弹原生框。
 func fatalBox(detail string) {
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
 		fmt.Fprintf(os.Stderr, "%s\n", detail)
 		return
 	}
