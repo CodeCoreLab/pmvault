@@ -8,11 +8,13 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 import urllib.request
 
-BASE_DIR = r"C:\Users\Administrator\AppData\Local\Temp\verify_zip\密码管理器-桌面版"
+# 验收目录基于系统临时目录推导，避免硬编码绝对路径在换机后失效
+BASE_DIR = os.path.join(tempfile.gettempdir(), "verify_zip", "密码管理器-桌面版")
 DATA = os.path.join(BASE_DIR, "data")
 BAT = os.path.join(BASE_DIR, "启动密码管理器.bat")
 OP = urllib.request.build_opener(urllib.request.ProxyHandler({}))

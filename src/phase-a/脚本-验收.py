@@ -10,12 +10,14 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import sys
 import time
 import urllib.error
 import urllib.request
 
-BASE_DIR = r"C:\Users\Administrator\AppData\Local\Temp\verify_zip\密码管理器-桌面版"
+# 验收目录基于系统临时目录推导，避免硬编码绝对路径在换机后失效
+BASE_DIR = os.path.join(tempfile.gettempdir(), "verify_zip", "密码管理器-桌面版")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 EXE = os.path.join(BASE_DIR, "vaultd.exe")
 PORT = 18310

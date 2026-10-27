@@ -3,8 +3,7 @@
 """跳板机：编译 Rust 原型（含 KDF 基准），并做 Rust↔PHP 互通验证。"""
 import socket
 import sys
-
-import paramiko
+import tempfile
 from pathlib import Path
 
 HOST = "example-jump-host"
@@ -53,10 +52,12 @@ def main() -> int:
 
     sftp = cli.open_sftp()
     cli.exec_command("mkdir -p /opt/lab/rustproto/src")[1].read()
+    # 本地待上传的原型放在系统临时目录下，避免硬编码用户路径
+    local_root = Path(tempfile.gettempdir()) / "rustproto"
     for local, remote in [
-        (r"C:\Users\Administrator\AppData\Local\Temp\rustproto\Cargo.toml", "/opt/lab/rustproto/Cargo.toml"),
-        (r"C:\Users\Administrator\AppData\Local\Temp\rustproto\src\main.rs", "/opt/lab/rustproto/src/main.rs"),
-        (r"C:\Users\Administrator\AppData\Local\Temp\rustproto\src\bench.rs", "/opt/lab/rustproto/src/bench.rs"),
+        (str(local_root / "Cargo.toml"), "/opt/lab/rustproto/Cargo.toml"),
+        (str(local_root / "src" / "main.rs"), "/opt/lab/rustproto/src/main.rs"),
+        (str(local_root / "src" / "bench.rs"), "/opt/lab/rustproto/src/bench.rs"),
     ]:
         try:
             with sftp.open(remote, "wb") as fh:

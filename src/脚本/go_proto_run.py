@@ -3,9 +3,10 @@
 """把 Go 原型上传到跳板机、拉依赖、编译并执行互通验证。"""
 import socket
 import sys
+import tempfile
+from pathlib import Path
 
 import paramiko
-from pathlib import Path
 
 HOST = "example-jump-host"
 KEY = str(Path.home() / ".ssh" / "id_workbuddy")
@@ -13,6 +14,8 @@ GOPATH_ENV = "export PATH=/opt/go/bin:$PATH; export GOPATH=/opt/gopath; export G
 
 
 def main() -> int:
+    # 本地待上传的原型文件放在系统临时目录下，避免硬编码用户路径
+    local_root = Path(tempfile.gettempdir()) / "goproto"
     cli = paramiko.SSHClient()
     cli.load_system_host_keys()
     cli.set_missing_host_key_policy(paramiko.WarningPolicy())
@@ -23,7 +26,7 @@ def main() -> int:
     sftp = cli.open_sftp()
     cli.exec_command("mkdir -p /opt/lab/goproto")[1].read()
     for local, remote in [
-        (r"C:\Users\Administrator\AppData\Local\Temp\goproto\main.go", "/opt/lab/goproto/main.go"),
+        (str(local_root / "main.go"), "/opt/lab/goproto/main.go"),
     ]:
         with sftp.open(remote, "wb") as fh:
             fh.write(open(local, "rb").read())

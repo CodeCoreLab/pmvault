@@ -3,14 +3,16 @@
 """跳板机 Ubuntu 复验：重置为全新库 → 启服务 → 跑全链路测试脚本。"""
 import socket
 import sys
+import tempfile
+from pathlib import Path
 
 import paramiko
-from pathlib import Path
 
 HOST = "example-jump-host"
 KEY = str(Path.home() / ".ssh" / "id_workbuddy")
 DIR = "/opt/lab/pm2.0"
-SCRIPT = r"C:\Users\Administrator\AppData\Local\Temp\test_body.sh"
+# 测试脚本放在系统临时目录下，避免硬编码用户路径
+SCRIPT = str(Path(tempfile.gettempdir()) / "test_body.sh")
 
 
 def run(cli, cmd, timeout=60):
