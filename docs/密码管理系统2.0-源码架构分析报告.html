@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>密码管理系统 2.0 — 源码架构分析报告</title>
+<style>
+:root{
+  --ink:#1f2933; --ink-2:#52606d; --ink-3:#7b8794;
+  --line:#e2e8ee; --line-2:#cfd8e3;
+  --bg:#f7f9fb; --card:#ffffff; --soft:#f1f5f9;
+  --brand:#2f6f5e; --brand-soft:#e8f2ee;
+  --red:#c0453f; --red-soft:#fdeceb;
+  --amber:#a9762a; --amber-soft:#fdf4e3;
+  --green:#2f7a4f; --green-soft:#eaf6ef;
+  --blue:#2f5d94; --blue-soft:#eaf1fa;
+  --mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1080px;margin:0 auto;padding:32px 24px 72px}
+h1{font-size:27px;line-height:1.35;margin:0 0 6px;letter-spacing:-.2px}
+h2{font-size:19px;margin:44px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--brand);display:inline-block}
+h3{font-size:15.5px;margin:26px 0 8px;color:var(--ink)}
+h4{font-size:14px;margin:18px 0 6px;color:var(--ink-2)}
+p{margin:10px 0}
+.sub{color:var(--ink-2);font-size:13.5px;margin-bottom:22px}
+code{font-family:var(--mono);font-size:12.8px;background:var(--soft);
+  padding:1px 5px;border-radius:4px;color:#0f4d3c;white-space:nowrap}
+pre{font-family:var(--mono);font-size:12.5px;line-height:1.6;background:#0f1b18;color:#d6e4df;
+  padding:14px 16px;border-radius:8px;overflow-x:auto;margin:12px 0}
+pre .c{color:#7d9b91}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:14px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi .n{font-size:22px;font-weight:600;color:var(--brand);letter-spacing:-.5px}
+.kpi .l{font-size:12.5px;color:var(--ink-3);margin-top:2px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.4px;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--soft);font-weight:600;color:var(--ink-2);font-size:12.8px;white-space:nowrap}
+tbody tr:nth-child(even){background:#fbfcfd}
+.tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:20px;white-space:nowrap;font-weight:600}
+.t-p0{background:var(--red-soft);color:var(--red)}
+.t-p1{background:var(--amber-soft);color:var(--amber)}
+.t-p2{background:var(--blue-soft);color:var(--blue)}
+.t-ok{background:var(--green-soft);color:var(--green)}
+.t-n{background:var(--soft);color:var(--ink-2)}
+ul,ol{margin:8px 0 8px 0;padding-left:22px}
+li{margin:4px 0}
+.layers{display:flex;flex-direction:column;gap:8px;margin:16px 0}
+.layer{display:flex;gap:14px;align-items:stretch}
+.lname{flex:0 0 132px;background:var(--brand);color:#fff;border-radius:8px;
+  font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;
+  text-align:center;padding:10px 8px;white-space:nowrap}
+.lbody{flex:1 1 auto;display:flex;flex-wrap:wrap;gap:8px}
+.box{background:var(--card);border:1px solid var(--line-2);border-radius:8px;
+  padding:9px 12px;font-size:12.8px;flex:1 1 150px;min-width:0}
+.box b{display:block;font-size:13px;margin-bottom:1px}
+.box span{color:var(--ink-3);font-family:var(--mono);font-size:11.5px}
+.flow{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:12px 0}
+.step{display:flex;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line)}
+.step:last-child{border-bottom:0}
+.step .i{flex:0 0 22px;height:22px;border-radius:50%;background:var(--brand-soft);color:var(--brand);
+  font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.step .t{flex:1 1 auto;font-size:13.4px;min-width:0}
+.step .t em{font-style:normal;color:var(--ink-3);font-family:var(--mono);font-size:11.8px}
+.note{border-left:3px solid var(--brand);background:var(--brand-soft);padding:10px 14px;
+  border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.warn{border-left:3px solid var(--amber);background:var(--amber-soft);padding:10px 14px;
+  border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.hl{border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:14px 0;background:var(--card)}
+.hl .hd{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}
+.hl .hd b{font-size:15px}
+.hl .why{color:var(--ink-2);font-size:13.2px;margin:6px 0}
+.hl .why em{font-style:normal;color:var(--brand);font-weight:600}
+footer{margin-top:48px;padding-top:14px;border-top:1px solid var(--line);color:var(--ink-3);font-size:12.2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>密码管理系统 2.0 — 源码架构分析</h1>
+<div class="sub">分析对象：<code>F:\360极速浏览器X下载\密码管理系统2.0\密码管理系统2.0</code>　·　版本 <code>2.0.0</code>　·　分析日期 2026-10-21</div>
+
+<div class="grid">
+  <div class="kpi"><div class="n">12,699</div><div class="l">代码总行数（PHP 5,290 / JS 3,967 / CSS 3,442）</div></div>
+  <div class="kpi"><div class="n">0</div><div class="l">后端框架依赖（原生 PHP 手写路由）</div></div>
+  <div class="kpi"><div class="n">0</div><div class="l">前端库依赖（无 jQuery / 无构建链）</div></div>
+  <div class="kpi"><div class="n">7 + 2</div><div class="l">SQLite 表（业务 7 + 系统设置/限流 2）</div></div>
+</div>
+
+<!-- ============ 1 项目概览 ============ -->
+<h2>一、项目概览</h2>
+
+<p>一个<strong>单机自部署的 Web 密码保险箱</strong>：PHP + SQLite，无需安装、无第三方云依赖，把程序丢到任意支持 PHP 的站点目录即可运行。设计目标明确——「数据只在自己服务器上」，因此全部复杂度集中在<strong>本地加密与密钥管理</strong>，而非分布式、多租户或同步。</p>
+
+<table>
+<thead><tr><th style="width:132px">维度</th><th>实际情况</th></tr></thead>
+<tbody>
+<tr><td>形态</td><td>单体 Web 应用：2 个入口页（<code>index.php</code> 登录/初始化、<code>main.php</code> 主界面）+ 8 个 API 端点 + 5 个类库文件</td></tr>
+<tr><td>使用者模型</td><td><strong>单账户系统</strong>：<code>Auth::register()</code> 首行即判 <code>COUNT(users) &gt; 0</code> 就拒绝（<code>includes/auth.php:124-127</code>），本质是「个人保险箱」而非团队密码库</td></tr>
+<tr><td>运行要求</td><td>PHP 7.0+（推荐 8.x）、PDO_SQLite、OpenSSL；sodium 扩展为可选增强项</td></tr>
+<tr><td>数据落盘</td><td><code>data/passwords.db</code>（SQLite 单文件，当前 100 KB，实测为空库）+ <code>data/backups/*.db</code></td></tr>
+<tr><td>代码规模</td><td>PHP 5,290 行 / JS 3,967 行 / CSS 3,442 行；最大单文件 <code>assets/js/app.js</code>（3,657 行）、<code>main.php</code>（1,085 行）</td></tr>
+<tr><td>版本演进</td><td>v1.0 基础 CRUD → v1.2 引入 CBC+HMAC 与主密钥 → <strong>v2.0 加密体系换代</strong>（GCM + Argon2id + 恢复密钥 + 一批高危漏洞修复）</td></tr>
+</tbody>
+</table>
+
+<div class="note">
+<strong>一句话定位：</strong>这是一次「加密架构重构」的产物，而不是功能堆砌的产物。从 README 的更新日志可见，v2.0 的绝大部分工作是把 v1 的「PBKDF2 10,000 次 + 用户名派生固定 salt + CBC + 无版本号密文」整体迁移到「Argon2id + 随机 salt + GCM + 版本化密文」，并保证<u>老数据不丢、老用户无感</u>。这套「向前兼容 + 静默迁移 + 失败回滚」的组合，是这个项目最值得读的部分。
+</div>
+
+<!-- ============ 2 技术栈 ============ -->
+<h2>二、技术栈</h2>
+
+<table>
+<thead><tr><th style="width:110px">层</th><th style="width:220px">选型</th><th>说明与取舍</th></tr></thead>
+<tbody>
+<tr><td>后端语言</td><td>PHP 原生（无框架）</td><td>无 Composer、无 autoload、无路由库。每个 API 文件 = 一个 <code>switch ($action)</code> 分发器，<code>require_once</code> 手动引入类库。<strong>取舍</strong>：部署零门槛（任何共享主机可跑），代价是路由/参数校验/错误处理三类横切逻辑在每个端点重复。</td></tr>
+<tr><td>数据存储</td><td>SQLite 3（PDO）</td><td>单文件、无服务进程、天然契合单用户。表结构由 <code>Database::initTables()</code> 在<em>每次连接</em>时幂等创建/迁移（<code>CREATE TABLE IF NOT EXISTS</code> + <code>ALTER TABLE</code> 包 try/catch），无需迁移工具。读写全部走 PDO 预处理语句。</td></tr>
+<tr><td>密码学</td><td>OpenSSL（AES-256-GCM / CBC）+ libsodium（Argon2id）+ 内置 <code>hash_pbkdf2</code>/<code>password_hash</code></td><td>不引第三方加密库，全部用 PHP 内置扩展。<code>Security::bestKdfType()</code> 运行时探测 sodium 是否存在，决定走 Argon2id 还是 PBKDF2-600k。</td></tr>
+<tr><td>前端</td><td>原生 ES2017+ / Fetch / 无框架</td><td><code>app.js</code> 手感类似「手写 SPA」：全局状态变量 + 命令式 DOM 渲染 + 事件委托。无虚拟 DOM、无打包器，浏览器直接执行。</td></tr>
+<tr><td>样式</td><td>纯 CSS + CSS 自定义属性双主题</td><td><code>:root</code> 定义 20 余个语义变量，<code>[data-theme="dark"]</code> 只覆盖颜色变量；组件样式一次编写，主题切换零成本（<code>assets/css/style.css:5-40</code>）。主题值持久化在 <code>users.settings</code> JSON 字段里，跨设备一致。</td></tr>
+<tr><td>图标</td><td>内联 SVG Sprite（<code>&lt;symbol&gt;</code> + <code>&lt;use&gt;</code>）</td><td>实测 <code>main.php</code> 内置 <strong>101 个 symbol</strong>，分类图标库 <strong>67 个</strong>（另有 30 个 Logo 白名单），全部 <code>currentColor</code> 描边，随文字色与主题自动变色。README 记录此举替换 Font Awesome，<strong>减少约 190 KB</strong> 加载。</td></tr>
+<tr><td>交互组件</td><td>自研模态框系统（alert / confirm / prompt + toast）</td><td>用 <code>customAlert/customConfirm/customPrompt/customShowToast</code> 全面替代浏览器原生弹窗，保证样式统一、可异步 await、可定制按钮文案（<code>app.js:2621-2770</code>）。</td></tr>
+<tr><td>Web 服务器</td><td>Nginx / Apache 双支持</td><td>Apache 走 <code>.htaccess</code>（<code>RewriteRule ^(includes|data|logs)/ - [F,L]</code> + <code>&lt;FilesMatch \.(db|sqlite3)$&gt; Deny</FilesMatch&gt;</code>）；Nginx 无法读 <code>.htaccess</code>，需手工加 <code>location ~* ^/(data|includes|logs)(/|$) { return 404; }</code> —— README 显式标注了这个坑。</td></tr>
+</tbody>
+</table>
+
+<h4>值得注意的两个「零依赖」细节</h4>
+<ul>
+<li><strong>前端不引第三方 CDN</strong>：所有 JS/CSS 同源加载，配合 <code>Content-Security-Policy: default-src 'self'</code> 才能真正生效。若引 CDN，CSP 就必须开口子。</li>
+<li><strong>无构建链</strong>：改完文件刷新即生效，代价是 <code>app.js</code> 长到 3,657 行、<code>style.css</code> 长到 3,442 行，且靠 <code>?v=2.1.8</code> 手工维护缓存版本号（<code>main.php:1083</code>）——这是没有被工程化的一处明显欠债。</li>
+</ul>
+
+<!-- ============ 3 架构说明 ============ -->
+<h2>三、架构说明</h2>
+
+<h3>3.1 分层结构</h3>
+<div class="layers">
+  <div class="layer">
+    <div class="lname">表现层</div>
+    <div class="lbody">
+      <div class="box"><b>index.php</b><span>登录 / 初始化 / 找回账户</span></div>
+      <div class="box"><b>main.php</b><span>主界面骨架 + 101 个 SVG symbol</span></div>
+      <div class="box"><b>assets/js/app.js</b><span>全部交互逻辑（3,657 行）</span></div>
+      <div class="box"><b>assets/js/login.js</b><span>登录与找回流程</span></div>
+    </div>
+  </div>
+  <div class="layer">
+    <div class="lname">接口层</div>
+    <div class="lbody">
+      <div class="box"><b>api/auth.php</b><span>login/register/recover/verify_master_key</span></div>
+      <div class="box"><b>api/passwords.php</b><span>CRUD + decrypt + 弱密码/重复检测</span></div>
+      <div class="box"><b>api/categories.php</b><span>分类树 / 移动 / 排序</span></div>
+      <div class="box"><b>api/backup.php</b><span>备份 / 列表 / 删除 / 还原</span></div>
+      <div class="box"><b>api/import_export.php</b><span>CSV 双向 + 模板</span></div>
+      <div class="box"><b>api/search.php</b><span>全局 / 高级筛选</span></div>
+      <div class="box"><b>api/generator.php</b><span>生成 + 强度</span></div>
+      <div class="box"><b>api/settings.php</b><span>偏好 / 系统名与 Logo</span></div>
+    </div>
+  </div>
+  <div class="layer">
+    <div class="lname">领域层</div>
+    <div class="lbody">
+      <div class="box"><b>Auth</b><span>includes/auth.php — 登录、会话、主密钥轮换、恢复、迁移、自动备份</span></div>
+      <div class="box"><b>Security</b><span>includes/security.php — KDF、AES、CSRF、限流、强度、生成器</span></div>
+    </div>
+  </div>
+  <div class="layer">
+    <div class="lname">基础设施层</div>
+    <div class="lbody">
+      <div class="box"><b>Database</b><span>includes/database.php — PDO 单例 + 建表迁移 + 原生 SQL/事务</span></div>
+      <div class="box"><b>functions</b><span>includes/functions.php — jsonResponse / requireLogin / requireCSRF / 分类树 / Logo 渲染</span></div>
+      <div class="box"><b>config</b><span>includes/config.php — 常量、安全响应头、会话参数、目录自愈</span></div>
+    </div>
+  </div>
+</div>
+
+<p>依赖方向严格单向：<code>api/*</code> → <code>functions</code> → <code>{Auth, Security, Database}</code> → <code>config</code>。没有反向引用，也没有循环依赖。<code>config.php</code> 在文件顶部就发送安全响应头并 <code>session_start()</code>，因此<strong>任何</strong>入口页（无论页面还是 API）只要 <code>require</code> 到它，就自动获得 CSP/CSRF 会话/时区配置——这是它替代「中间件」的土办法，但确实有效。</p>
+
+<h3>3.2 请求生命周期</h3>
+<div class="flow">
+  <div class="step"><div class="i">1</div><div class="t">HTTP 请求命中 <code>api/*.php</code> → <code>require functions.php</code> → 级联加载 <code>auth / security / database</code> → <code>config.php</code> 发出安全头并开启会话　<em>config.php:13-24</em></div></div>
+  <div class="step"><div class="i">2</div><div class="t"><code>getParam('action')</code> 取动作名（<strong>参数合并 POST 优先于 GET</strong>，见 <code>functions.php:48-50</code>），进入 <code>switch</code> 分发</div></div>
+  <div class="step"><div class="i">3</div><div class="t">守卫三段式：<code>requireLogin()</code>（401）→ <code>requireCSRF()</code>（403）→ 业务级 <code>Security::dbRateLimit()</code>（429）</div></div>
+  <div class="step"><div class="i">4</div><div class="t">业务处理：<code>Database::getInstance()</code> 拿单例连接，预处理语句读写；涉及加解密时调用 <code>Security::encrypt/decrypt</code></div></div>
+  <div class="step"><div class="i">5</div><div class="t">统一出口 <code>jsonResponse($data, $code)</code>：设 <code>Content-Type</code> + 三个禁缓存头 → <code>echo json_encode(..., JSON_UNESCAPED_UNICODE)</code> → <code>exit</code>　<em>functions.php:13-22</em></div></div>
+</div>
+
+<div class="note">
+<strong>设计观察：</strong><code>jsonResponse()</code> 内部的 <code>exit</code> 让每个 <code>case</code> 无需 <code>break</code>，形成「校验即返回」的扁平风格；但也意味着<strong>任何忘记返回的分支会继续向下贯穿</strong>。实际代码中依赖这个隐式约定，属于「省字但脆」的写法。
+</div>
+
+<h3>3.3 目录职责</h3>
+<table>
+<thead><tr><th style="width:190px">路径</th><th style="width:70px">行数</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>index.php</code></td><td>224</td><td>未初始化时渲染「分步卡片」创建主账户；已初始化渲染登录；内嵌「找回账户」双步面板。直接读 DB 判断 <code>userCount</code> 决定渲染哪套 UI。</td></tr>
+<tr><td><code>main.php</code></td><td>1,085</td><td>主界面骨架（顶栏/侧边分类树/中央表格/分页）+ <strong>全部 13 个模态框</strong> + 101 个 SVG symbol + 注入 <code>CSRF_TOKEN</code> 常量。</td></tr>
+<tr><td><code>includes/config.php</code></td><td>78</td><td>常量中心：KDF 参数、AES 长度、会话/锁定/限流/生成器配置；安全响应头；<code>data/</code> 与 <code>backups/</code> 目录自愈 + 防列目录的 <code>index.html</code> 兜底。</td></tr>
+<tr><td><code>includes/database.php</code></td><td>349</td><td>PDO 单例 + 7 张表幂等建表与 ALTER 迁移 + 通用 <code>insert/update/delete/fetchOne/fetchAll</code> + 事务封装 + <code>close()</code> 重置单例（还原数据库专用）。</td></tr>
+<tr><td><code>includes/auth.php</code></td><td>792</td><td>最重的领域类：登录/注册/登出、会话超时、主密钥验证后的<strong>加密体系迁移</strong>、<strong>主密钥密码轮换</strong>、<strong>恢复密钥生成与账户找回</strong>、自动备份。</td></tr>
+<tr><td><code>includes/security.php</code></td><td>651</td><td>密码学与防护底座：KDF 派生、三段式解密、CSRF、DB 限流、客户端 IP、密码哈希与 rehash、强度评分、密码生成器。</td></tr>
+<tr><td><code>includes/functions.php</code></td><td>179</td><td>横切工具：JSON 出口、登录/CSRF 守卫、分类树与后代 ID 递归、文件大小格式化、Logo 白名单渲染、调试日志。</td></tr>
+<tr><td><code>api/*.php</code>（8 个）</td><td>1,749</td><td>纯控制器：取参 → 守卫 → 调领域类 → 出 JSON。无业务状态，无模板。</td></tr>
+<tr><td><code>assets/js/app.js</code></td><td>3,657</td><td>前端全部逻辑：<code>apiCall</code> 统一封装（自动加 CSRF、时间戳防缓存、非 JSON 响应兜底）、渲染、模态框、解密重试、主题、导入导出、备份还原。</td></tr>
+<tr><td><code>assets/css/style.css</code></td><td>3,442</td><td>双主题变量 + 桌面表格 / 移动卡片双视图 + 全部组件样式。</td></tr>
+<tr><td><code>data/passwords.db</code></td><td>—</td><td>SQLite 主库（实测 9 表、0 业务记录、2 条系统设置）。</td></tr>
+<tr><td><code>.htaccess</code></td><td>36</td><td>Apache 侧目录封禁 + 扩展名封禁 + <code>Options -Indexes</code>。</td></tr>
+</tbody>
+</table>
+
+<h3>3.4 数据模型</h3>
+<p>实测库内共 9 张表（含 <code>sqlite_sequence</code>）:</p>
+<table>
+<thead><tr><th style="width:150px">表</th><th>关键字段</th><th>作用</th></tr></thead>
+<tbody>
+<tr><td><code>users</code></td><td>username / password_hash / <b>master_key_password_hash</b> / <b>master_key_salt</b> / <b>kdf_type</b> / <b>kdf_params</b> / <b>recovery_key_salt</b> / <b>recovery_backup</b> / login_attempts / locked_until / settings</td><td>账户与<strong>密钥元数据</strong>。注意：存的是「派生参数」，<u>不存主密钥本身</u>。</td></tr>
+<tr><td><code>passwords</code></td><td>user_id / category_id / title / url / username / <b>cipher</b> / notes / is_deleted / deleted_at</td><td>密码条目。<strong>只有 <code>cipher</code> 一列是密文</strong>，标题/网址/用户名/备注均明文（为可搜索性做的取舍）。</td></tr>
+<tr><td><code>password_history</code></td><td>password_id / cipher / created_at</td><td>改密时的旧密文留存（旧版本仍用旧密钥加密，故轮换时必须一并重加密）。</td></tr>
+<tr><td><code>categories</code></td><td>user_id / parent_id / name / icon / sort_order</td><td>两级分类树，<code>parent_id=0</code> 为顶层；「未分类」是 <code>category_id=0</code> 的<strong>虚拟分类</strong>，不占表中行。</td></tr>
+<tr><td><code>sessions</code></td><td>user_id / session_id / ip / user_agent / expires_at</td><td>登录会话留痕。<strong>仅写入与清理，未参与鉴权校验</strong>（鉴权靠 PHP 原生 session）。</td></tr>
+<tr><td><code>logs</code></td><td>user_id / action / details / ip_address</td><td>操作审计流水（登录、增删改、备份、迁移、找回等）。</td></tr>
+<tr><td><code>rate_limits</code></td><td>name(PK) / count / reset_at</td><td>数据库级限流计数，防「丢 Cookie 绕过」。</td></tr>
+<tr><td><code>system_settings</code></td><td>setting_key / setting_value</td><td>全局配置：<code>app_name</code>、<code>app_logo</code>（图标白名单值）。</td></tr>
+</tbody>
+</table>
+
+<div class="warn">
+<strong>实测发现（重要）：</strong>建表语句里声明了 <code>FOREIGN KEY ... ON DELETE CASCADE / SET DEFAULT</code>，但连接初始化只设了 <code>ERRMODE</code> 与 <code>FETCH_MODE</code>（<code>database.php:14-17</code>），<strong>从未执行 <code>PRAGMA foreign_keys = ON</code></strong>。SQLite 默认关闭外键，因此这些级联<u>实际不生效</u>；<code>api/categories.php:217</code> 注释「级联删除由数据库处理」与事实不符。目前靠业务代码逐项前置检查（有子分类/有密码记录就拒绝删除）恰好没出事，但这是靠自觉而非约束。
+</div>
+
+<h3>3.5 三条关键流程</h3>
+
+<h4>①「双密码」解锁链：登录 ≠ 解密</h4>
+<div class="flow">
+  <div class="step"><div class="i">1</div><div class="t"><strong>登录</strong>：<code>password_verify(登录密码, users.password_hash)</code> → 通过后 <code>session_regenerate_id(true)</code> 换 ID（防会话固定）→ 写 <code>$_SESSION['user_id']</code>，<strong>不写主密钥</strong>（<code>auth.php:95-102</code>）</div></div>
+  <div class="step"><div class="i">2</div><div class="t"><strong>解锁</strong>：首次查看/复制密码时弹主密钥框 → <code>verify_master_key</code> → 先 <code>password_verify(主密钥密码, master_key_password_hash)</code> 验口令，再按库中 <code>kdf_type/kdf_params/salt</code> <strong>重新派生</strong> 32 字节主密钥 → 存入 session 并回传前端（<code>api/auth.php:216-277</code>）</div></div>
+  <div class="step"><div class="i">3</div><div class="t"><strong>使用</strong>：<code>main.php</code> 加载后先打 <code>check_master_key</code> 静默恢复会话内已解锁的密钥 → 刷新页面无需重输（<code>app.js:110-118</code>）</div></div>
+  <div class="step"><div class="i">4</div><div class="t"><strong>解密</strong>：<code>api/passwords.php?action=decrypt</code> 接收前端传来的 <code>master_key</code> → <code>Security::decrypt()</code>（GCM 认证）→ 首次失败且提示「不同主密钥」时，前端自动作废内存密钥、重新弹框验证、<strong>重试一次</strong>（<code>app.js:1165-1187</code>）</div></div>
+</div>
+<p>这套设计把「身份认证」与「数据解密能力」彻底解耦：登录密码泄露 → 攻击者进得来但看不到密码；主密钥密码泄露 → 攻击者看得到但进不来（还需登录口令）。二者独立修改互不影响（<code>auth.php:251-256</code>）。</p>
+
+<h4>②主密钥轮换（全量重加密）</h4>
+<div class="flow">
+  <div class="step"><div class="i">1</div><div class="t">验旧主密钥密码 + 强度校验新密码</div></div>
+  <div class="step"><div class="i">2</div><div class="t">按旧 <code>kdf_type/params/salt</code> 派生旧密钥 → <strong>强制自动备份</strong>，备份失败即中止（<code>auth.php:393-395</code>）</div></div>
+  <div class="step"><div class="i">3</div><div class="t"><code>beginTransaction()</code> → 用<strong>新随机 salt + 最优 KDF</strong> 派生新密钥 → 遍历 <code>passwords</code>（含回收站 <code>is_deleted=1</code>）与 <code>password_history</code>，逐条 <code>decrypt(old) → encrypt(new)</code> → 更新 <code>users</code> 的 hash/salt/kdf 参数 → <code>commit()</code>（<code>auth.php:400-443</code>）</div></div>
+  <div class="step"><div class="i">4</div><div class="t">任何一步抛错 → <code>rollback()</code> → 返回「数据已回滚保持原样」；成功则 <code>$_SESSION['master_key'] = 新密钥</code>，当前会话<strong>无缝衔接，无需重新解锁</strong></div></div>
+</div>
+
+<h4>③恢复密钥（找回账户）</h4>
+<div class="flow">
+  <div class="step"><div class="i">1</div><div class="t"><strong>生成</strong>：验主密钥密码 → 派生出当前主密钥 → 随机生成 <strong>32 字符</strong>（字母表剔除 <code>ILO01</code>，8 组×4，约 158 bit 熵）→ 用 <code>PBKDF2(rk, 随机 salt, 600k)</code> 派生的密钥<strong>加密主密钥</strong>存入 <code>recovery_backup</code> → 明文密钥<strong>仅返回一次</strong>（<code>auth.php:498-540</code>）</div></div>
+  <div class="step"><div class="i">2</div><div class="t"><strong>验证</strong>（登录页第一步）：解 <code>recovery_backup</code> 得到主密钥 → 成功即通过；用户不存在/未设恢复密钥时<strong>照做一次同成本哑运算</strong>再返回失败，防时序探测（<code>auth.php:474-491</code>）</div></div>
+  <div class="step"><div class="i">3</div><div class="t"><strong>重置</strong>：拿到旧主密钥 → 强制备份 → 事务内全量重加密（条目 + 历史）→ 更新登录口令哈希、主密钥口令哈希、KDF 参数，<strong>并用新主密钥刷新 <code>recovery_backup</code></strong> → <code>session_regenerate_id</code> 后自动登录（<code>auth.php:560-659</code>）</div></div>
+</div>
+<p>本质是<strong>信封加密（key wrapping）</strong>：数据用主密钥加密，主密钥用恢复密钥加密。这样「改密码」只需重加密一把钥匙，不必重新设计数据层。</p>
+
+<!-- ============ 4 核心功能 ============ -->
+<h2>四、核心功能</h2>
+
+<table>
+<thead><tr><th style="width:150px">功能域</th><th style="width:300px">能力</th><th>实现要点</th></tr></thead>
+<tbody>
+<tr><td>密码条目</td><td>增 / 删（软删 + 回收站）/ 改 / 查；分页（10/20/50/100）；按更新时间倒序</td><td>删除只置 <code>is_deleted=1</code>，另设 <code>permanent_delete</code> 与 <code>batch_delete</code>；<code>update</code> 期间把旧 cipher 复制到 <code>password_history</code></td></tr>
+<tr><td>分类管理</td><td>两级树、67 个图标、拖拽级移动、同级上移/下移、删除前置校验（有子级或有密码则拒绝）</td><td><code>buildCategoryTree()</code> 递归组装；<code>getCategoryChildrenIds()</code> 递归取后代以支持「父分类包含子分类」的过滤；移动时检测「移入自己子孙」形成环</td></tr>
+<tr><td>搜索</td><td>全局关键字（标题/用户名/网址/备注）+ 分类内搜索 + <code>notes</code> 参与匹配</td><td>300ms 防抖（<code>debounce</code>）+ SQL <code>LIKE</code> 参数化；高级筛选（弱密码/重复/长期未更新）后端已实现</td></tr>
+<tr><td>解密与复制</td><td>详情页明文切换、列表行内一键复制用户名/密码、剪贴板双通道</td><td><code>navigator.clipboard</code> 失败时回退 <code>execCommand('copy')</code>——因为<strong>非 HTTPS 环境 Clipboard API 不可用</strong>，这个 fallback 让 HTTP 部署也能用</td></tr>
+<tr><td>生成器</td><td>6–64 位；大小写/数字/常用符号/复杂符号；首字母大写；排除相似字符；实时强度</td><td><code>random_int()</code> 而非 <code>rand()</code>；构造字符集后<strong>强制补齐每类至少一个</strong>，再 <code>shuffle</code>（<code>security.php:594-647</code>）</td></tr>
+<tr><td>备份/还原</td><td>登录自动备份 + 手动备份 + 列表（含紧急备份分组）+ 删除 + 还原</td><td><code>VACUUM INTO</code> 生成一致快照（SQLite ≥3.27），旧版降级为关闭连接后 <code>copy()</code>；同名秒级冲突加序号；三重完整性校验</td></tr>
+<tr><td>导入导出</td><td>CSV 导出（导出 <code>cipher</code> 而非明文）、模板下载（示例行明文）、导入明文自动加密、upsert</td><td>导出带 UTF-8 BOM 保证 Excel 中文正常；导入先 <code>isEncryptedCipher()</code> 判断是密文直通还是明文加密；同「标题+网址」则更新（以导入为准）</td></tr>
+<tr><td>账户安全</td><td>改登录密码、改主密钥密码、生成/重生成恢复密钥、系统名与 Logo 定制</td><td>改登录密码<strong>不动</strong>主密钥；改主密钥密码触发全量重加密；Logo 值走 <code>appLogoIcons()</code> 白名单</td></tr>
+<tr><td>多端适配</td><td>桌面表格视图 / 移动卡片视图、侧边栏抽屉、移动端功能菜单、深浅双主题</td><td>同一份数据两套渲染（<code>.password-table-container</code> vs 卡片），CSS 断点切换；主题写回 <code>users.settings</code></td></tr>
+<tr><td>内置教程</td><td>「简单教程」模态：三步快速上手 + 6 章锚点导航 + 双列卡片</td><td>纯静态 HTML 嵌在 <code>main.php</code>，离线可用、不依赖任何文档站</td></tr>
+</tbody>
+</table>
+
+<!-- ============ 5 亮点 ============ -->
+<h2>五、亮点总结</h2>
+
+<div class="hl">
+  <div class="hd"><b>亮点 1｜双密码分离：把「身份」与「解密能力」拆成两把钥匙</b><span class="tag t-ok">安全架构</span></div>
+  <div class="why"><em>做法</em>：<code>users</code> 表同时存 <code>password_hash</code>（登录）与 <code>master_key_password_hash</code>（解密）。登录成功只拿到会话，主密钥必须<strong>再验一次</strong>才派生。</div>
+  <div class="why"><em>思路</em>：单密码方案里，登录成功 = 同时掌握解密权，任何一处泄露即全盘失守。拆开后形成「知道口令 ①→进得来」「知道口令 ②→看得见」的双因子错位；两个口令独立修改、互不牵连（<code>auth.php:251-256</code> 明确注释「修改登录密码不影响主密钥」）。</div>
+  <div class="why"><em>代价与补救</em>：多一次输入。作者用「一次登录只解锁一次 + 会话内静默恢复（<code>check_master_key</code>）+ 密钥失配自动重试」把摩擦压到最低。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 2｜主密钥从不落库，只落「派生参数」——因此算法可迭代</b><span class="tag t-ok">密钥管理</span></div>
+  <div class="why"><em>做法</em>：库里只有 <code>master_key_salt</code> / <code>kdf_type</code> / <code>kdf_params</code>。每次验证口令时按这三个字段临时派生 32 字节密钥，用完存 session。</div>
+  <div class="why"><em>思路</em>：这是把 KDF 参数<strong>当作数据来存</strong>，而不是写死在代码里。于是「升级算法」变成一次数据迁移而非换代：<code>deriveKey()</code> 读 <code>kdf_type</code> 决定走 Argon2id（<code>sodium_crypto_pwhash</code>，opslimit 2 / memlimit 64MB）还是 <code>hash_pbkdf2(sha256, 600k)</code>，<strong>还能识别「无 kdf_type」的旧账户并自动走 legacy PBKDF2 10,000 次</strong>（<code>security.php:66-123</code>）。同一份代码同时伺候三个世代的用户数据。</div>
+  <div class="why"><em>工程价值</em>：新环境装 sodium 就自动升级到 Argon2id，<u>不改一行代码</u>（README 亦以此为卖点）。这是「配置即迁移路径」的典型应用。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 3｜静默迁移：备份 → 事务 → 失败回滚，老数据零丢失</b><span class="tag t-ok">兼容性设计</span></div>
+  <div class="why"><em>做法</em>：用户「首次用旧体系验证主密钥」时触发 <code>migrateMasterKey()</code>：先 <code>autoBackup()</code>（失败就放弃本次迁移、下次再试）→ 事务内逐条 <code>decrypt(旧) → encrypt(新)</code> → 更新 KDF 参数 → commit；异常则 rollback 并<strong>继续使用旧密钥</strong>，功能不受影响（<code>auth.php:278-343</code>）。</div>
+  <div class="why"><em>思路</em>：把「不可逆的加密升级」拆成「可重试的惰性操作」。三个安全阀很到位：<strong>迁移前必有备份</strong>（备份是前置条件，不是尽力而为）、<strong>全程单事务</strong>（不会出现一半新一半旧的中间态）、<strong>失败即降级</strong>（返回 <code>null</code>，调用方继续用旧 key，用户无感）。</div>
+  <div class="why"><em>同类一致</em>：改主密钥密码、恢复账户两条流程复用了完全相同的「备份 → 事务 → 回滚」骨架，行为可预期。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 4｜版本化密文 + 三格式自动识别 + 歧义回退</b><span class="tag t-ok">密码学细节</span></div>
+  <div class="why"><em>做法</em>：v3 格式 <code>base64( 0x03 ‖ IV(12) ‖ Tag(16) ‖ Ciphertext )</code>，首字节为版本号。<code>decrypt()</code> 读首字节构造候选列表（0x03→v3、0x02→v2、兜底 legacy），逐个尝试，前一个失败才试下一个（<code>security.php:226-331</code>）。</div>
+  <div class="why"><em>思路（这段注释值得抄）</em>：旧版密文<strong>没有版本前缀</strong>，其首字节就是随机 IV 的第 0 字节，<strong>有 1/256 概率恰好等于 0x02 或 0x03</strong>。若只看首字节判定格式，约 0.8% 的老数据会被误判而永久解不开。作者的解法是「按可能性顺序全部试一遍」，靠 GCM/HMAC 的<strong>认证失败即拒绝</strong>来自证格式——用密码学完整性替代格式标记，正确且优雅。</div>
+  <div class="why"><em>同一血统</em>：v2 用的是 AES-CBC + HMAC-SHA256 且严格 <strong>encrypt-then-MAC</strong>（先加密再对 <code>iv‖ciphertext</code> 做 HMAC），校验用 <code>hash_equals()</code> 常量时间比较——即便在旧格式上也没犯「MAC-then-encrypt」这个经典错误。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 5｜恢复密钥 = 信封加密，且「仅显示一次」</b><span class="tag t-ok">可用性 × 安全</span></div>
+  <div class="why"><em>做法</em>：32 字符、剔除易混字符（无 <code>I L O 0 1</code>）、8×4 分组、约 158 bit 熵。用 <code>PBKDF2(rk, 随机 salt, 600k)</code> 派生包装密钥，加密<u>主密钥</u>后存库；明文只在生成响应里出现一次，前端用大字号展示框提示抄写（<code>security.php:140-170</code>、<code>auth.php:498-540</code>）。</div>
+  <div class="why"><em>思路</em>：传统「安全问题找回」＝把安全等级降到最弱环节。这里换成「你能证明持有那张纸」：<strong>离线 + 一次性 + 高熵</strong>，攻击者只能靠暴力猜 158 bit，而服务端已限流到每小时 10 次（按用户名）/ 30 次（按 IP）。重新生成会让旧密钥<strong>立即失效</strong>（覆写 <code>recovery_backup</code>）。</div>
+  <div class="why"><em>闭环设计</em>：账户找回成功后<strong>主动刷新</strong> <code>recovery_backup</code> 为新主密钥（<code>auth.php:632</code>），所以同一张纸可以反复救急，不必每次换新。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 6｜防时序侧信道：三处「假动作」做得认真</b><span class="tag t-ok">攻击面收敛</span></div>
+  <div class="why"><em>做法 1</em>：用户名不存在时，仍对一条硬编码 bcrypt 哈希执行 <code>password_verify()</code>，让「用户不存在」与「密码错误」耗时一致（<code>auth.php:55-59</code>）。<br>
+  <em>做法 2</em>：恢复密钥验证对「用户不存在 / 未设置恢复密钥」场景<strong>照常执行完整 600k PBKDF2 派生</strong>，只在最后返回 null，并注释「哑运算已完成，耗时与真实场景一致」（<code>auth.php:474-491</code>）。<br>
+  <em>做法 3</em>：<code>getClientIP()</code> <strong>只信任 <code>REMOTE_ADDR</code></strong>，显式拒绝 <code>X-Forwarded-For</code>，理由写在注释里：请求头可任意伪造，信任它等于让 IP 限流失效、日志被污染（<code>security.php:459-467</code>）。</div>
+  <div class="why"><em>为何值得记</em>：绝大多数自研项目只在「密码比对」上小心翼翼，却漏掉「分支提前 return」泄露状态这一层；也常见「为了拿真实 IP 而信任 XFF」反而被打穿限流。这三点说明作者是真读过攻击面清单的。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 7｜限流下沉到数据库：丢 Cookie 也绕不过去</b><span class="tag t-ok">防护强度</span></div>
+  <div class="why"><em>做法</em>：保留会话级 <code>rateLimit()</code> 但明确标注「不用于防爆破」，另实现 <code>dbRateLimit(name, max, window)</code> 以 <code>rate_limits</code> 表计数。登录双维度：<code>login_ip_*</code> 10 次/60s + <code>login_user_*</code> 5 次/300s；主密钥验证 <code>mkverify_*</code> 10 次/300s；改主密钥 5 次/300s；恢复密钥生成 5 次/3600s（<code>security.php:416-457</code>）。</div>
+  <div class="why"><em>思路</em>：会话级限流的致命伤是「清 Cookie 即重置」，等于没有。改存 DB 后，计数器与攻击者身份解耦。作者还补了两个工程细节：并发插入冲突时 <strong>insert 失败降级为 update</strong>；按 <code>random_int(1,100)===1</code> 概率性清理过期记录，<strong>避免为清理单开定时任务</strong>。</div>
+  <div class="why"><em>容错取向</em>：限流组件自身异常时<strong>放行</strong>（fail-open）而非拒绝——可用性优先，与「个人保险箱」的定位自洽。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 8｜备份一致性：VACUUM INTO + 三重校验 + 还原前紧急备份</b><span class="tag t-ok">数据可靠性</span></div>
+  <div class="why"><em>一致性</em>：用 <code>VACUUM INTO 'path'</code> 而非 <code>copy()</code>——前者在数据库打开状态下生成<strong>事务一致的完整快照</strong>，后者可能拷到「主文件已写、WAL 未合并」的半成品。旧版 SQLite 才降级为「先 <code>Database::close()</code> 再 copy」（<code>backend backup.php:71-88</code>）。</div>
+  <div class="why"><em>完整性</em>：<code>verifyBackupIntegrity()</code> 三重检查——非 0 字节 + <code>PRAGMA quick_check == 'ok'</code> + <code>sqlite_master</code> 中存在 <code>users</code> 表。第三条尤其关键：<strong>SQLite 会把 0 字节文件当作合法空库</strong>，若不拦，还原一个空备份 = 静默清空全部数据（<code>api/backup.php:32-52</code>）。</div>
+  <div class="why"><em>可回退</em>：还原前先用同样方式给<strong>当前库</strong>拍紧急备份并校验，不通过就取消还原；紧急备份同样进列表管理、可再还原。还原后 <code>Database::close()</code> 重置单例，避免旧 PDO 句柄继续指向被替换的 inode 导致「还原后写入丢失」——这个坑在更新日志里被明确记为已修（<code>api/backup.php:199-236</code>）。</div>
+  <div class="why"><em>前端配合</em>：还原是「确认框 + 输入『确认还原』二次确认」双保险，成功后提示「首次查看密码需重新输入主密钥」并 3 秒自动刷新（<code>app.js:2516-2545</code>）。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 9｜前端零依赖的性能与体验取舍</b><span class="tag t-ok">性能 / UX</span></div>
+  <div class="why"><em>减重</em>：Font Awesome 全量替换为内联 SVG Sprite，README 记录减约 <strong>190 KB</strong>；图标统一 <code>currentColor</code>，深浅主题自动适配，无需两套资源。<code>main.php</code> 一次性内联 101 个 <code>&lt;symbol&gt;</code>（约等于一次 HTTP 请求拿完整个图标库）。</div>
+  <div class="why"><em>去装饰</em>：更新日志明确写「移除遮罩层实时模糊」「移除全站装饰性动画」——<code>backdrop-filter: blur()</code> 在低端设备上是实打实的掉帧源，砍掉它换来弹窗即开即用。这是<strong>以体验指标（响应感）压过视觉指标（炫技）</strong>的清醒取舍。</div>
+  <div class="why"><em>健壮性</em>：<code>apiCall()</code> 先 <code>response.text()</code> 再 <code>JSON.parse()</code>，并对「非 JSON 错误响应」「空响应」「损坏 JSON」分别给出人话提示，而不是让 <code>fetch().json()</code> 抛浏览器原始错误（<code>app.js:62-105</code>）。列表渲染用 <code>createElement</code> + <code>textContent</code> 构造，仅 URL 一处用 <code>innerHTML</code> 且经 <code>escapeAttr</code> 全转义，XSS 面控制得比较干净。</div>
+  <div class="why"><em>双视图</em>：桌面 <code>&lt;table&gt;</code>、移动卡片，共用同一份 <code>passwords</code> 数组与同一套 CRUD 回调，不做两套数据流。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 10｜导入导出「不经明文落盘」的巧思</b><span class="tag t-ok">数据流动</span></div>
+  <div class="why"><em>做法</em>：导出的 CSV 里密码列填的是<strong>密文 <code>cipher</code></strong>，不是明文；模板则给明文示例。导入时用 <code>isEncryptedCipher()</code> 判断：合法密文直通入库（不重新加密），明文则用当前主密钥加密（<code>api/import_export.php:37-51, 115-124</code>）。</div>
+  <div class="why"><em>价值</em>：导出是密码管理器最危险的出口——一个明文 CSV 留在下载目录就等于全盘泄露。这里让「备份到 CSV」在<u>不降低安全等级</u>的前提下可用（前提：导入时用同一主密钥，且该 CSV 只对本系统有意义）。导出还带 BOM 保证 Excel 中文不乱码，导入端主动跳 BOM、按表头定位密码列、兼容缺列文件。</div>
+  <div class="why"><em>幂等</em>：以「同标题 + 同网址」为业务主键做 upsert，重复导入不会翻倍，且以导入数据为准覆盖字段。</div>
+</div>
+
+<div class="hl">
+  <div class="hd"><b>亮点 11｜零迁移工具的「自愈式」建表</b><span class="tag t-ok">可维护性</span></div>
+  <div class="why"><em>做法</em>：<code>initTables()</code> 在每次连接时执行 <code>CREATE TABLE IF NOT EXISTS</code>，逐条 <code>ALTER TABLE ADD COLUMN</code> 包在 try/catch 里让「列已存在」的异常静默通过；同时用 <code>PRAGMA table_info</code> 探测旧字段决定是否补列（<code>database.php:53-252</code>）。</div>
+  <div class="why"><em>思路</em>：把 schema 升级做成<strong>幂等的、随连接自动执行</strong>的动作，用户升级只需覆盖文件、刷新页面。对「无运维、无 CLI、上传即用」的分发形态来说，这比引入 Phinx/Doctrine Migrations 务实得多。数据目录与 <code>index.html</code> 占位文件也在 <code>config.php</code> 里自愈创建（<code>config.php:65-78</code>）。</div>
+</div>
+
+<!-- ============ 6 局限 ============ -->
+<h2>六、局限与潜在改进点</h2>
+
+<p>下列问题按「是否影响数据安全/正确性」分级。P0 = 会丢数据或可被直接绕过；P1 = 功能实质失效或安全强度明显低于宣称；P2 = 工程质量与体验欠债。</p>
+
+<table>
+<thead><tr><th style="width:56px">级别</th><th style="width:230px">问题</th><th>依据与影响</th><th style="width:250px">建议</th></tr></thead>
+<tbody>
+<tr>
+<td><span class="tag t-p1">P1</span></td>
+<td><strong>改主密钥密码后，恢复密钥实质失效</strong></td>
+<td><code>changeMasterKeyPassword()</code> 更新了 <code>master_key_password_hash / master_key_salt / kdf_type / kdf_params</code>，但<strong>漏更新 <code>recovery_backup</code></strong>（<code>auth.php:436-441</code> 对比 <code>recoverAccount</code> 的 <code>auth.php:626-635</code>）。旧恢复密钥解出的仍是<u>旧主密钥</u>，用它去解已用新密钥加密的 <code>cipher</code> 必然 GCM 认证失败 → 事务回滚 → 用户看到「找回失败，数据已回滚」，且无从自救。README 承诺「恢复密钥继续有效」在此场景下不成立。</td>
+<td>轮换成功后同事务内重算 <code>recovery_backup = encrypt(newKey, deriveRecoveryKey(rk, rkSalt))</code>；或明确要求重新生成恢复密钥并在 UI 提示。</td>
+</tr>
+<tr>
+<td><span class="tag t-p1">P1</span></td>
+<td><strong>SQLite 外键未启用，声明的级联不生效</strong></td>
+<td>连接初始化未执行 <code>PRAGMA foreign_keys = ON</code>（<code>database.php:14-17</code>），SQLite 默认关闭外键 → <code>ON DELETE CASCADE / SET DEFAULT</code> 全为装饰。删用户不会级联删密码、删分类不会把条目归 0（<code>categories.php:217</code> 注释与事实相反）。当前靠业务层前置检查规避，一旦有绕过路径即产生孤儿数据。</td>
+<td>构造器内加一条 <code>$this->db->exec('PRAGMA foreign_keys = ON');</code>，并用 <code>settings.php:check_integrity</code> 做过一次孤儿数据体检。</td>
+</tr>
+<tr>
+<td><span class="tag t-p1">P1</span></td>
+<td><strong>主密钥回传前端并随请求提交，XSS 即可全量窃取</strong></td>
+<td><code>verify_master_key</code> 直接把 base64 主密钥放进 JSON 响应（<code>api/auth.php:277</code>），前端存全局 <code>masterKey</code> 变量并每次 <code>decrypt</code> 时作为参数回传（<code>app.js:1173-1180</code>）。同时 CSP 为 <code>script-src 'self' 'unsafe-inline'</code>——为注入 <code>CSRF_TOKEN</code> 不得不开 inline，等于给 XSS 留了门。一次 XSS = 主密钥泄露 = 全部密码泄露（即使数据盘被拿走也无法补救）。</td>
+<td>中期改为服务端持有密钥：<code>decrypt</code> 接口不再接收 <code>master_key</code>，只从 <code>$_SESSION</code> 取；短期抽成 nonce 化 CSP（<code>script-src 'self' 'nonce-...'</code>）关掉 <code>unsafe-inline</code>。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>自动锁定（15 分钟无操作）未实现</td>
+<td><code>AUTO_LOCK_TIME</code> 在 <code>config.php:48</code> 定义、被 <code>settings.php</code> 当作默认值下发，但<strong>全库无任何消费方</strong>（前端也无计时器/失焦清 key 逻辑）。目前「锁定」只靠 <code>SESSION_TIMEOUT=1800</code> 的会话过期，粒度粗且不清理前端内存里的 <code>masterKey</code>。</td>
+<td>前端加 <code>visibilitychange</code> + 空闲计时器，超时即清 <code>masterKey</code> 与 <code>revealedPassword</code> 并弹解锁框。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>密码历史「只写不读」</td>
+<td><code>password_history</code> 在改密时写入旧 cipher、轮换时一并重加密、永久删除时清理，<strong>但没有任何读取接口或 UI</strong>。用户看不到历史版本，表只增不减（除随条目删除），是纯成本。</td>
+<td>补 <code>action=history</code> + 详情页「历史版本」抽屉；或明确砍掉写入。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>两组后端能力无前端入口（死接口）</td>
+<td><code>passwords.php</code> 的 <code>check_weak</code> / <code>check_duplicate</code>、<code>search.php</code> 的 <code>advanced</code>、<code>settings.php</code> 的 <code>stats</code> / <code>optimize</code> / <code>check_integrity</code> —— 前端 <code>app.js</code> <strong>零调用</strong>（已全量 grep 确认）。这些能力本应是密码管理器的差异化卖点（弱口令巡检、重复使用检测），目前只能手工打接口。</td>
+<td>菜单加「安全检查」入口，一次展示弱密码数 / 重复组数 / 长期未更新数。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td><code>isEncryptedCipher()</code> 判据过宽，可能误吞明文</td>
+<td>该函数最后一行 <code>$isLegacy = (strlen($decoded) &gt;= 28)</code> 恒真，即<strong>任何能成功 base64 解码且 ≥28 字节的字符串都被判为密文</strong>（<code>security.php:336-359</code>）。导入时若某条明文密码恰好是 28+ 字符的合法 base64（例如长随机口令），会被当作密文直通入库 → 该条目从此解不开，且无任何报错。</td>
+<td>判据收紧为「v3/v2 前缀正确」或「legacy 长度精确匹配 <code>28 + N</code>」；更稳妥是导入时对疑似密文做一次<strong>解密试探</strong>，失败则按明文加密。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>备份无轮转、无加密、目录权限偏松</td>
+<td>每次登录自动备份（<code>auth.php:731-791</code>），文件只增不删；备份是<strong>普通 SQLite 文件</strong>（内有全部 cipher 与用户哈希），仅靠 <code>.htaccess</code>/Nginx 规则挡下载。<code>data/</code> 与 <code>backups/</code> 以 <code>0755</code> 创建（<code>config.php:67-71</code>），DB 文件沿袭系统默认 umask。</td>
+<td>加保留策略（如保留最近 N 份 / 按天折叠）；目录 <code>0700</code>、文件 <code>0600</code>；可选对备份再做一层主密钥加密。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>SQLite 并发配置缺失</td>
+<td>未设 <code>PRAGMA journal_mode=WAL</code>、未设 <code>busy_timeout</code>。多标签页或「备份/还原 + 正常读写」并发时易触发 <code>database is locked</code>；<code>Database</code> 构造器的兜底提示「可能正被占用，请稍后刷新重试」（<code>database.php:23</code>）正说明作者踩过。</td>
+<td>连接后设 <code>busy_timeout=5000</code> + WAL，可显著减少锁冲突（单用户场景风险低，属体验优化）。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>HTTP 明文部署 = 当前最大剩余风险</td>
+<td>README 自陈：「密码管理器走 HTTP 时主密码明文过网络，是当前最大剩余风险」。代码里 <code>cookie_secure</code> 会随 <code>$_SERVER['HTTPS']</code> 自动开关（<code>config.php:21</code>），但<strong>不会拒绝</strong>非 HTTPS 下的登录请求。</td>
+<td>生产强制跳转 HTTPS（<code>if (!HTTPS) redirect 301</code>），或检测到非 HTTPS 时在 UI 顶部挂醒目警告条。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>死代码与工程欠债</td>
+<td><code>Security::secureErase()</code>、<code>xssFilter()</code>、会话级 <code>rateLimit()</code>、<code>writeDebugLog()</code> 均<strong>无调用方</strong>（已 grep 确认）；<code>sessions</code> 表只写不校验，鉴权完全依赖 PHP 原生 session；<code>app.js</code> 3,657 行单文件、<code>style.css</code> 3,442 行单文件、缓存版本号手工维护（<code>?v=2.1.8</code>）。另 <code>main.php</code> 带 UTF-8 BOM（其余 PHP 文件无），在严格 <code>output_buffering=Off</code> 环境下可能导致 <code>header()</code> 失效或页面顶部出现隐形字符。</td>
+<td>清理死代码；拆分 JS 为 <code>api/</code>、<code>render/</code>、<code>modals/</code>；BOM 统一剥离。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>强度评分过于粗糙</td>
+<td><code>checkPasswordStrength()</code> 只有 6 条规则（长度≥6、四类字符、长度≥12），满分 6 → 「极强」（<code>security.php:501-530</code>）。<code>Abc123!@</code> 这类 8 位常见模式可得 5 分「很强」，与真实抗爆破能力严重不符；被 <code>check_weak</code> / 生成器 / 注册校验共用，误判会传导到「弱密码巡检」结果。</td>
+<td>引入 zxcvbn 类字典+模式评估（可参考其算法，不必引包），或至少加黑名单与重复/序列模式检测。</td>
+</tr>
+<tr>
+<td><span class="tag t-p2">P2</span></td>
+<td>单账户 + 无二次验证</td>
+<td>注册硬限 <code>COUNT(users)&gt;0</code> 即拒绝，无法多人共用；无 TOTP/WebAuthn。作为「个人保险箱」合理，但若被拿去当团队密码库会立刻不够用（无角色、无分享、无审计可见性）。</td>
+<td>保持单账户定位即可，但应在 README 明确边界；如需扩展，先把 <code>user_id</code> 隔离从 SQL 里「每条都带」上升为策略层。</td>
+</tr>
+</tbody>
+</table>
+
+<div class="note">
+<strong>结论：</strong>这个项目的「安全内核」明显高于同类教程级作品的水准——<u>KDF 参数数据化、密文版本化、迁移可回滚、限流去会话化、时序侧信道收口</u>这五件事，通常只有在真实生产事故里被教过一遍的开发者才会做对。而它的薄弱点集中在<strong>「外围一致性」</strong>：功能做了一半的接口（历史/弱密码/统计）、声明了却没启用的约束（外键）、算了却没消费的配置（自动锁定）、更新了却没同步的字段（<code>recovery_backup</code>）。换句话说，<em>核心想清楚了，边缘没收干净</em>——这也是自研单体项目最常见的成熟度断层。
+</div>
+
+<footer>
+分析方式：全量静态阅读（PHP 5,290 行 / JS 3,967 行 / CSS 3,442 行）+ SQLite 库结构直查（9 表）+ 关键符号全库 grep 验证（死代码、死接口、配置消费方、外键 PRAGMA、BOM）。
+标注为「实测」的结论均来自上述直接读取；未标注者为基于代码的推断。本机无 PHP 运行环境，<strong>未做运行时验证</strong>，动态行为结论以代码路径为准。
+</footer>
+
+</div>
+</body>
+</html>

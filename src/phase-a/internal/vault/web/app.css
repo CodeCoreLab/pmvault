@@ -1,0 +1,149 @@
+:root{
+  --bg:#0f1512; --panel:#16201b; --panel-2:#1c2822; --line:#2a3a31;
+  --txt:#e3ece6; --txt-2:#9fb2a6; --brand:#4fae7f; --brand-2:#3d8f66;
+  --danger:#d9736b; --warn:#d0a15c;
+  --mono:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f6f8f6; --panel:#fff; --panel-2:#f1f5f2; --line:#dde5df;
+    --txt:#1d2a22; --txt-2:#5b6b61; --brand:#2f7d57; --brand-2:#26694a;
+    --danger:#b6463d; --warn:#8f6a24;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--txt);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+[hidden]{display:none !important}
+
+/* ---------- 登录 ---------- */
+.auth-wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
+.auth-card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);
+  border-radius:12px;padding:28px 26px}
+.auth-card h1{margin:0 0 4px;font-size:20px}
+.sub{margin:0 0 18px;color:var(--txt-2);font-size:13px}
+
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12.5px;color:var(--txt-2);margin-bottom:5px}
+input,select,textarea{width:100%;background:var(--panel-2);color:var(--txt);
+  border:1px solid var(--line);border-radius:7px;padding:9px 11px;font-size:14px;
+  font-family:inherit}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:-1px}
+textarea{resize:vertical}
+.hint{display:block;margin-top:5px;font-size:12px;color:var(--txt-2)}
+.hint-inline{font-size:12px;color:var(--txt-2);font-weight:400}
+
+.pwd{position:relative;display:flex;gap:6px;align-items:center}
+.pwd input{flex:1 1 auto}
+.eye{flex:0 0 auto;background:transparent;border:1px solid var(--line);color:var(--txt-2);
+  border-radius:6px;padding:6px 9px;cursor:pointer;font-size:13px}
+.eye:hover{color:var(--txt)}
+
+.btn{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+  border-radius:7px;padding:8px 14px;font-size:13.5px;cursor:pointer;font-family:inherit}
+.btn:hover{border-color:var(--brand)}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.primary:hover{background:var(--brand-2)}
+.btn.ghost{background:transparent}
+.btn.small{padding:5px 10px;font-size:12.5px}
+.btn.block{width:100%;margin-top:6px}
+
+.error{background:rgba(217,115,107,.14);color:var(--danger);border:1px solid rgba(217,115,107,.4);
+  border-radius:7px;padding:8px 11px;font-size:13px;margin:10px 0}
+
+/* ---------- 主界面 ---------- */
+.app{height:100%;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;justify-content:space-between;
+  padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{font-weight:600;font-size:15px}
+.top-actions{display:flex;gap:8px}
+
+.body{flex:1 1 auto;display:flex;min-height:0}
+.sidebar{flex:0 0 210px;border-right:1px solid var(--line);background:var(--panel);
+  display:flex;flex-direction:column;min-height:0}
+.side-head{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 14px;font-size:12.5px;color:var(--txt-2)}
+.cat-list{list-style:none;margin:0;padding:0 8px;overflow-y:auto;flex:1 1 auto}
+.cat-list li{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:7px;
+  cursor:pointer;font-size:13.5px;color:var(--txt)}
+.cat-list li:hover{background:var(--panel-2)}
+.cat-list li.active{background:var(--brand);color:#fff}
+.cat-list li .cname{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat-list li .cdel{flex:0 0 auto;opacity:.55;background:transparent;border:0;color:inherit;
+  cursor:pointer;font-size:13px}
+.cat-list li .cdel:hover{opacity:1}
+/* 二级分类缩进。用类而不是 JS 设置 element.style.*：
+   CSP 为 style-src 'self'，任何内联 style 都会被浏览器拒绝。 */
+.cat-list li.cat-child{padding-left:26px}
+/* 条目中的网址链接配色（同上，禁止内联 style） */
+.grid a.ext-link{color:var(--brand)}
+/* 复制用的离屏 textarea：不能 inline style，靠类定位到视窗外。
+   位置错了会让 execCommand('copy') 抓不到正确内容。 */
+.copy-shim{position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none}
+.side-foot{padding:10px 14px;border-top:1px solid var(--line);font-size:13px}
+.side-foot a{color:var(--brand);text-decoration:none}
+
+.content{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;padding:16px 18px;overflow-y:auto}
+.content-head{display:flex;justify-content:space-between;align-items:flex-end;
+  gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.title-row{display:flex;align-items:center;gap:8px}
+.title-row h2{margin:0;font-size:17px}
+.badge{background:var(--panel-2);border:1px solid var(--line);border-radius:20px;
+  padding:1px 9px;font-size:12px;color:var(--txt-2)}
+.tools{display:flex;gap:8px}
+.search{width:260px}
+
+.banner{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:rgba(208,161,92,.14);border:1px solid rgba(208,161,92,.45);
+  color:var(--warn);border-radius:8px;padding:9px 13px;margin-bottom:12px;font-size:13px}
+
+.grid{width:100%;border-collapse:collapse;font-size:13.5px}
+.grid th,.grid td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+.grid th{font-size:12px;color:var(--txt-2);font-weight:600;background:var(--panel-2);white-space:nowrap}
+.grid tbody tr:hover{background:var(--panel)}
+.grid td.trunc{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 列宽。原先是 <th style="width:...">，被 CSP style-src 'self' 拒绝后列宽全失效，
+   表格布局退化成浏览器自动分配。改类后不再依赖内联样式。 */
+.grid .col-idx{width:56px}
+.grid .col-pwd{width:150px}
+.grid .col-time{width:132px}
+/* 4 个双字按钮（查看/复制/编辑/删除）+ 3 个 4px 间距 + 单元格 20px 内边距 ≈ 180px，
+   130px 会把按钮挤到折行。 */
+.grid .col-act{width:196px}
+/* 退出程序后的整页提示 */
+.bye{display:flex;align-items:center;justify-content:center;height:100vh;
+  font:15px -apple-system,'Segoe UI',sans-serif;color:var(--txt-2);
+  text-align:center;line-height:1.8}
+.mono{font-family:var(--mono);font-size:12.5px;color:var(--txt-2)}
+/* 按钮不能被 flex 压缩：默认 flex-shrink:1 会把按钮挤到 min-content 宽度，
+   两个字的标签会竖排成「查/看」。固定不缩 + 不换行。 */
+.row-actions{display:flex;gap:4px;flex-wrap:nowrap}
+.row-actions button{flex:0 0 auto;white-space:nowrap;
+  background:transparent;border:1px solid var(--line);color:var(--txt-2);
+  border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer}
+.row-actions button:hover{color:var(--txt);border-color:var(--brand)}
+
+.empty{text-align:center;color:var(--txt-2);padding:36px 0;font-size:13.5px}
+.pager{display:flex;align-items:center;justify-content:center;gap:12px;
+  padding:14px 0;color:var(--txt-2);font-size:13px}
+
+/* ---------- 对话框 ---------- */
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  color:var(--txt);padding:22px 24px;max-width:520px;width:calc(100% - 32px)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h3{margin:0 0 4px;font-size:17px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:10px 18px;font-size:13.5px;box-shadow:0 6px 24px rgba(0,0,0,.28);z-index:50}
+.toast.err{border-color:rgba(217,115,107,.6);color:var(--danger)}
+
+@media (max-width:720px){
+  .body{flex-direction:column}
+  .sidebar{flex:0 0 auto;border-right:0;border-bottom:1px solid var(--line);max-height:200px}
+  .search{width:100%}
+  .two-col{grid-template-columns:1fr}
+}

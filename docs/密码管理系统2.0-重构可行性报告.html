@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>密码管理系统 2.0 — 运行验证与 Rust/Go 重构可行性报告</title>
+<style>
+:root{
+  --ink:#1f2933; --ink-2:#52606d; --ink-3:#7b8794;
+  --line:#e2e8ee; --line-2:#cfd8e3;
+  --bg:#f7f9fb; --card:#ffffff; --soft:#f1f5f9;
+  --brand:#2f6f5e; --brand-soft:#e8f2ee;
+  --red:#c0453f; --red-soft:#fdeceb;
+  --amber:#a9762a; --amber-soft:#fdf4e3;
+  --green:#2f7a4f; --green-soft:#eaf6ef;
+  --blue:#2f5d94; --blue-soft:#eaf1fa;
+  --purple:#6b4e8f; --purple-soft:#f2edf9;
+  --mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1100px;margin:0 auto;padding:32px 24px 72px}
+h1{font-size:27px;line-height:1.35;margin:0 0 6px;letter-spacing:-.2px}
+h2{font-size:19px;margin:46px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--brand);display:inline-block}
+h3{font-size:15.5px;margin:26px 0 8px}
+h4{font-size:14px;margin:18px 0 6px;color:var(--ink-2)}
+p{margin:10px 0}
+.sub{color:var(--ink-2);font-size:13.5px;margin-bottom:22px}
+code{font-family:var(--mono);font-size:12.8px;background:var(--soft);
+  padding:1px 5px;border-radius:4px;color:#0f4d3c;white-space:nowrap}
+pre{font-family:var(--mono);font-size:12.4px;line-height:1.6;background:#0f1b18;color:#d6e4df;
+  padding:14px 16px;border-radius:8px;overflow-x:auto;margin:12px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px;margin:14px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi .n{font-size:21px;font-weight:600;color:var(--brand);letter-spacing:-.5px}
+.kpi .l{font-size:12.3px;color:var(--ink-3);margin-top:2px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.3px;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--soft);font-weight:600;color:var(--ink-2);font-size:12.7px;white-space:nowrap}
+tbody tr:nth-child(even){background:#fbfcfd}
+.tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:20px;white-space:nowrap;font-weight:600}
+.t-ok{background:var(--green-soft);color:var(--green)}
+.t-bad{background:var(--red-soft);color:var(--red)}
+.t-warn{background:var(--amber-soft);color:var(--amber)}
+.t-n{background:var(--soft);color:var(--ink-2)}
+.t-info{background:var(--blue-soft);color:var(--blue)}
+.t-exp{background:var(--purple-soft);color:var(--purple)}
+ul,ol{margin:8px 0 8px 0;padding-left:22px}
+li{margin:4px 0}
+.note{border-left:3px solid var(--brand);background:var(--brand-soft);padding:10px 14px;
+  border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.warn{border-left:3px solid var(--amber);background:var(--amber-soft);padding:10px 14px;
+  border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.danger{border-left:3px solid var(--red);background:var(--red-soft);padding:10px 14px;
+  border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.ok{border-left:3px solid var(--green);background:var(--green-soft);padding:10px 14px;
+  border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.bar{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:13px}
+.bar .name{flex:0 0 132px;color:var(--ink-2);font-family:var(--mono);font-size:12px}
+.bar .track{flex:1 1 auto;height:20px;background:var(--soft);border-radius:4px;overflow:hidden;position:relative}
+.bar .fill{height:100%;border-radius:4px}
+.bar .val{flex:0 0 92px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--ink)}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin:16px 0}
+.opt{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;position:relative}
+.opt.rec{border:2px solid var(--brand);box-shadow:0 2px 12px rgba(47,111,94,.10)}
+.opt .badge{position:absolute;top:-10px;right:12px;background:var(--brand);color:#fff;
+  font-size:11px;padding:2px 9px;border-radius:20px;font-weight:600}
+.opt h4{margin:0 0 4px;font-size:15px;color:var(--ink)}
+.opt .meta{font-size:12px;color:var(--ink-3);margin-bottom:8px}
+.opt p{font-size:13.2px;margin:6px 0}
+footer{margin-top:48px;padding-top:14px;border-top:1px solid var(--line);color:var(--ink-3);font-size:12.2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>密码管理系统 2.0 — 运行验证与 Rust / Go 重构可行性报告</h1>
+<div class="sub">验证环境：跳板机 Ubuntu 24.04.4 LTS（8 核 / 15 GB / 123 GB 空闲）　·　验证日期 2026-10-21　·　全部结论均来自实测</div>
+
+<div class="grid">
+  <div class="kpi"><div class="n">可运行</div><div class="l">PHP 8.3.6 + sodium，页面与 8 个 API 全通</div></div>
+  <div class="kpi"><div class="n">3 语言互通</div><div class="l">PHP ↔ Go ↔ Rust 密文双向互解，主密钥字节一致</div></div>
+  <div class="kpi"><div class="n">9.3×</div><div class="l">Go PBKDF2 比 PHP 快（327 ms vs 892 ms）</div></div>
+  <div class="kpi"><div class="n">2 个 P1</div><div class="l">恢复密钥失效、Argon2id 从未生效（实测坐实）</div></div>
+</div>
+
+<!-- ============================================================ -->
+<h2>一、先回答「有没有可操作页面」</h2>
+
+<p><strong>有，而且已经在跑。</strong>项目是标准 PHP Web 应用，两处入口：<code>index.php</code>（登录 / 初始化 / 找回账户）与 <code>main.php</code>（主界面）。本机无 PHP 环境，因此按其指定的 Ubuntu 环境搭建并实测。</p>
+
+<table>
+<thead><tr><th style="width:150px">验证项</th><th style="width:210px">实测结果</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>运行栈</td><td><span class="tag t-ok">成功</span> PHP 8.3.6</td><td>apt 装 <code>php-cli / php-sqlite3 / php-mbstring</code>，扩展实测存在：<code>openssl pdo_sqlite sodium sqlite3 mbstring</code>。<strong>sodium 已就位</strong>（这点很关键，见后文 Argon2id 缺陷）</td></tr>
+<tr><td>初始化页</td><td><span class="tag t-ok">HTTP 200 / 7,134 B</span></td><td>标题「创建主账户」，分步卡片布局渲染正常，<code>IS_INITIALIZED=false</code></td></tr>
+<tr><td>登录页</td><td><span class="tag t-ok">HTTP 200 / 8,575 B</span></td><td>注册后标题变「登录」，找回账户面板同时下发</td></tr>
+<tr><td>主界面</td><td><span class="tag t-ok">渲染成功</span></td><td>顶栏 + 分类树 + 表格 + 13 个模态框 + 101 个 SVG symbol 全部输出</td></tr>
+<tr><td>注册 → 登录 → 解锁</td><td><span class="tag t-ok">全链路通过</span></td><td>写库成功，<code>password_hash</code> 为 <code>$argon2id$v=19$m=65536,t=4,p=1$...</code>（登录口令确实用了 Argon2id）</td></tr>
+<tr><td>新增分类 / 新增密码 / 解密回读</td><td><span class="tag t-ok">全通</span></td><td><code>decrypt</code> 返回明文 <code>MyStr0ng!Pass</code>，与写入值一致</td></tr>
+<tr><td>备份</td><td><span class="tag t-ok">成功</span></td><td>生成 <code>backup_2026-10-21_12-35-10.db</code>，100 KB，<code>VACUUM INTO</code> 快照</td></tr>
+<tr><td>生成器 / 弱密码 / 统计</td><td><span class="tag t-ok">API 正常</span></td><td>生成 20 位密码返回强度「极强」；<code>stats</code> 返回条目数、分类数、库大小</td></tr>
+</tbody>
+</table>
+
+<h3>怎么自己打开看</h3>
+<pre><span class="c"># 跳板机（已验证可用，源码在 /opt/lab/pm2.0）</span>
+ssh root@example-jump-host
+cd /opt/lab/pm2.0
+php -S 127.0.0.1:8099 -t .          <span class="c"># 或 0.0.0.0:8099 便于本机浏览器访问</span>
+<span class="c"># 本机浏览器 → http://example-jump-host:8099/index.php</span>
+
+<span class="c"># 若想在自己机器上跑，两条路：</span>
+<span class="c"># A. Windows：下载 php-8.3-nts-Win32-vs16-x64.zip 解压，编辑 php.ini 打开</span>
+<span class="c">#    extension=openssl / pdo_sqlite / sqlite3 / sodium，然后 php -S 127.0.0.1:8080 -t .</span>
+<span class="c"># B. 已有 Nginx/Apache 环境：直接丢进站点目录（Apache 靠 .htaccess，Nginx 需手加 location 规则）</span>
+</pre>
+
+<div class="warn">
+<strong>⚠️ 只用 <code>php -S</code> 内置服务器时，数据库可被公网直接下载。</strong>实测 <code>/data/passwords.db</code> 与 <code>/includes/config.php</code> 均返回 <strong>HTTP 200</strong> —— 因为内置服务器不读 <code>.htaccess</code>。生产部署必须走 Nginx/Apache 并落实 README 里那条 <code>location</code> 规则。这是「能跑」与「能上生产」之间的硬分界。
+</div>
+
+<!-- ============================================================ -->
+<h2>二、实测坐实的缺陷（不是推断）</h2>
+
+<p>上一轮是基于静态阅读的推断；这一轮在 Ubuntu 上跑出来了。<strong>两条 P1 均已被真实请求复现。</strong></p>
+
+<h3>2.1 P1｜改主密钥密码后，恢复密钥实质失效</h3>
+<p>复现路径（全自动，可重跑）：生成恢复密钥 → 改主密钥密码 → 用旧恢复密钥找回。</p>
+<pre><span class="c">生成恢复密钥: MLNE-9XZV-BS3E-7PLC-KTLU-SGHH-ZJBB-EEPL</span>
+改主密钥结果: {"success":true,"message":"主密钥密码修改成功", ...}
+
+改后 verify_recovery_key : <span style="color:#7dffb0">{"success":true,"message":"恢复密钥验证通过"}</span>   <span class="c">← 校验通过，误导性极强</span>
+改后 recover（应能救回） : <span style="color:#ff8b8b">{"success":false,"message":"找回失败，数据已回滚保持原样，请稍后重试"}</span></pre>
+
+<p><strong>根因</strong>：<code>changeMasterKeyPassword()</code>（<code>includes/auth.php:436-441</code>）更新了 <code>master_key_password_hash / master_key_salt / kdf_type / kdf_params</code>，唯独<strong>漏更新 <code>recovery_backup</code></strong>。对照 <code>recoverAccount()</code>（<code>auth.php:626-635</code>）——那条路径是对的，还会主动刷新备份。</p>
+
+<p>于是：恢复密钥解出的仍是 <u>旧主密钥</u> → 用它去解已用新密钥加密的 <code>cipher</code> → GCM 认证必然失败 → 事务回滚 → 用户看到「找回失败」。更糟的是 <code>verify_recovery_key</code> 此时返回 <strong>成功</strong>（它只验能不能解出主密钥，不验主密钥还能不能解数据），用户会以为密钥有效，反复尝试后彻底失去救援手段。</p>
+
+<div class="danger">
+<strong>危害定级</strong>：这是「<u>唯一的账号恢复通道在用户毫无察觉的情况下被自己的一次常规操作废掉</u>」。README 明确承诺「恢复密钥可随时重新生成…找回后恢复密钥继续有效」，与实际行为不符。修复只需在轮换事务内补一行 <code>recovery_backup = encrypt(newKey, deriveRecoveryKey(rk, rkSalt))</code>。
+</div>
+
+<h3>2.2 P1｜Argon2id 从未生效（常量名写错，静默降级）</h3>
+<p>README 与简介都把「Argon2id 抗 GPU 暴力破解」列为头号卖点。实测：</p>
+<pre>sodium 已加载            : <span style="color:#7dffb0">YES</span>
+bestKdfType() 实际返回   : <span style="color:#ff8b8b">pbkdf2</span>   <span class="c">← 期望 argon2id</span>
+CONST ..._ALG_ARGON2ID   : 不存在（代码写错名）
+CONST ..._ALG_ARGON2ID13 : 存在</pre>
+
+<p><strong>根因</strong>：<code>includes/security.php:51</code> 与 <code>:82</code> 判定的是 <code>defined('SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID')</code>，而 PHP 的 sodium 扩展里这个常量真实名称是 <code>SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13</code>。前者<strong>永不存在</strong> → <code>bestKdfType()</code> 恒定返回 <code>'pbkdf2'</code> → 所有新用户的主密钥都走 PBKDF2-600k。</p>
+
+<p>实测证据链完整：注册后库里落的是 <code>"kdf_type":"pbkdf2","kdf_params":"{\"iterations\":600000}"</code>；同一环境手动调用 <code>sodium_crypto_pwhash(..., SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13)</code> 则正常出结果（96 ms）。</p>
+
+<div class="warn">
+<strong>为什么难发现</strong>：降级路径是<u>静默</u>的 —— 没有日志、没有告警，功能完全正常，只是安全强度低于宣称。这类「优雅降级遮掩配置错误」是安全类项目最典型的陷阱：降级必须配可观测信号，否则等于把缺陷藏起来。
+</div>
+
+<h3>2.3 P2｜外键确实未启用，声明的级联全是装饰</h3>
+<pre>PRAGMA foreign_keys = <span style="color:#ff8b8b">0</span>  (1=开 0=关)</pre>
+<p><code>Database</code> 构造器只设了 <code>ERRMODE</code> / <code>FETCH_MODE</code>（<code>database.php:14-17</code>），从未执行 <code>PRAGMA foreign_keys = ON</code>。而建表语句里写满了 <code>ON DELETE CASCADE</code> / <code>SET DEFAULT</code>，<code>categories.php:217</code> 还注释「级联删除由数据库处理」——与实际相反。</p>
+
+<h3>2.4 P2｜导入时的密文判定会误吞明文</h3>
+<pre>合法base64的明文口令    len=44  => <span style="color:#ff8b8b">TRUE (误判为密文!)</span>
+合法base64+padding      len=44  => <span style="color:#ff8b8b">TRUE (误判为密文!)</span>
+普通英文短语            len=28  => false</pre>
+<p><code>security.php:356</code> 的 <code>$isLegacy = (strlen($decoded) &gt;= 28)</code> <strong>恒为真</strong>，导致「任何能 base64 解码且 ≥28 字节」的字符串都被判成密文。用户若用一条 28+ 字符的随机口令（base64 字符集）做 CSV 导入，该条会被原样入库当成密文 → 此后永久解不开，且导入过程<u>不报错</u>。</p>
+
+<h3>2.5 性能实测：解锁卡顿是真的</h3>
+<p>PBKDF2-600k 在三处环境、三种实现的耗时（各自 3 次取样）：</p>
+<div class="card">
+  <div class="bar"><div class="name">PHP 8.3 (Ubuntu)</div><div class="track"><div class="fill" style="width:100%;background:#c0453f"></div></div><div class="val">892 ms</div></div>
+  <div class="bar"><div class="name">PHP 8.3 (Windows)</div><div class="track"><div class="fill" style="width:100%;background:#c0453f"></div></div><div class="val">1,037–1,250 ms</div></div>
+  <div class="bar"><div class="name">Rust 1.99 (Ubuntu)</div><div class="track"><div class="fill" style="width:47%;background:#a9762a"></div></div><div class="val">421 ms</div></div>
+  <div class="bar"><div class="name">Go 1.23 (Ubuntu)</div><div class="track"><div class="fill" style="width:37%;background:#2f7a4f"></div></div><div class="val">327 ms</div></div>
+  <div class="bar"><div class="name">Argon2id PHP/sodium</div><div class="track"><div class="fill" style="width:11%;background:#2f6f5e"></div></div><div class="val">91–96 ms</div></div>
+</div>
+<p>端到端 HTTP 解锁（<code>verify_master_key</code>）实测 <strong>1.15 / 1.17 s</strong>（Ubuntu）、<strong>1.62 / 1.70 / 2.23 s</strong>（Windows）。<strong>一次登录必卡 1 秒以上</strong> —— 这不是理论推演，是用户每次解锁都能感知的等待。</p>
+
+<div class="note">
+<strong>注意箭头方向</strong>：Argon2id（内存困难型）反而比 PBKDF2-600k <u>快 9 倍</u>且更抗 GPU。也就是说，<strong>修好那个常量名，既提升安全性又让解锁快一个数量级</strong> —— 这不是取舍，是纯赚。这条发现直接改变了重构的紧迫性排序：加密层的首位改进不是「换语言」，而是「让声明生效」。
+</div>
+
+<!-- ============================================================ -->
+<h2>三、重构可行性：先证明能互通，再谈换语言</h2>
+
+<p>重构密码管理器，最大的风险从来不是「代码写不出来」，而是<strong>「现有数据读不出来」</strong>。因此本轮先做互通性验证：用 Go 和 Rust 各自实现同一套 KDF + v3 密文格式，去解 PHP 写出的真实密文。</p>
+
+<h3>3.1 三语言完全互通（实测）</h3>
+
+<table>
+<thead><tr><th style="width:190px">验证</th><th style="width:120px">结果</th><th>证据</th></tr></thead>
+<tbody>
+<tr>
+  <td>主密钥派生一致性</td><td><span class="tag t-ok">字节完全一致</span></td>
+  <td>同一 <code>salt</code> + 同一口令，三方派生结果：<code>uzzdW9n7v5X19bLJvSNgsB8T1dwbxR6u0wu3yksWtq4=</code><br>PHP = Go = Rust，逐字节相同</td>
+</tr>
+<tr>
+  <td>Rust 解 PHP 密文</td><td><span class="tag t-ok">通过</span></td>
+  <td>格式嗅探 <code>v3 (AES-256-GCM + 版本前缀)</code> → 明文 <code>"MyStr0ng!Pass"</code></td>
+</tr>
+<tr>
+  <td>Go 解 PHP 密文</td><td><span class="tag t-ok">通过</span></td>
+  <td>明文 <code>"MyStr0ng!Pass"</code>，自加密回环亦 OK</td>
+</tr>
+<tr>
+  <td>PHP 解 Rust 密文</td><td><span class="tag t-ok">通过</span></td>
+  <td><code>Security::decrypt()</code> 直接返回 <code>MyStr0ng!Pass</code></td>
+</tr>
+<tr>
+  <td>PHP 解 Go 密文</td><td><span class="tag t-ok">通过</span></td>
+  <td>同上，跨方向无差异</td>
+</tr>
+<tr>
+  <td>Go 解 PHP 新密文</td><td><span class="tag t-ok">通过</span></td>
+  <td>PHP 端加密「跨语言双向互通-Go」→ Go 端正确解出</td>
+</tr>
+</tbody>
+</table>
+
+<div class="ok">
+<strong>结论：v3 密文格式是「可移植事实标准」。</strong>它没有依赖任何 PHP 特有语义 —— <code>0x03 ‖ IV(12) ‖ Tag(16) ‖ CT</code> 就是标准 AES-GCM 的字段重排。任何语言只要拿到 AES-256-GCM 和 PBKDF2/Argon2id 就能读写，<u>不存在锁定</u>。这意味着换语言<strong>不需要数据迁移窗口、不需要停机、不需要导出导入</strong>：新旧实现可以同期并存，读同一份库、写同一份库。
+</div>
+
+<h3>3.2 Go 侧能力验证</h3>
+<table>
+<thead><tr><th style="width:230px">验证项</th><th style="width:120px">结果</th><th>数据 / 说明</th></tr></thead>
+<tbody>
+<tr><td>纯 Go 读 SQLite（无 CGO）</td><td><span class="tag t-ok">成功</span></td>
+<td><code>modernc.org/sqlite v1.60.1</code> 直接打开 PHP 建的库，读出 <code>users=1</code> 与真实 salt/cipher。<strong>零 CGO、零 C 工具链</strong></td></tr>
+<tr><td>静态二进制约</td><td><span class="tag t-ok">2.0 MB</span></td>
+<td><code>ldd</code> 输出 <code>not a dynamic executable</code> —— 单文件即全部，无运行时依赖</td></tr>
+<tr><td>交叉编译三平台</td><td><span class="tag t-ok">一次成功</span></td>
+<td><code>CGO_ENABLED=0</code> 同时产出：linux/amd64（2.04 MB）、linux/arm64（1.90 MB）、windows/amd64（2.13 MB）</td></tr>
+<tr><td>PBKDF2-600k 耗时</td><td><span class="tag t-ok">327 ms</span></td>
+<td>比 PHP 快 <strong>2.7×</strong>；比 Rust 快 1.3×（Go 的 <code>pbkdf2</code> 有汇编优化）</td></tr>
+<tr><td>Argon2id 可用性</td><td><span class="tag t-ok">现成</span></td>
+<td><code>golang.org/x/crypto/argon2</code>，<code>IDKey(pw, salt, t=2, m=64MiB, p=1, 32)</code> → 183 ms</td></tr>
+</tbody>
+</table>
+
+<h3>3.3 Rust 侧能力验证</h3>
+<table>
+<thead><tr><th style="width:230px">验证项</th><th style="width:120px">结果</th><th>数据 / 说明</th></tr></thead>
+<tbody>
+<tr><td>编译产物</td><td><span class="tag t-ok">591 KB</span></td>
+<td>比 Go 小 3.4×（未做体积裁剪，默认 release）</td></tr>
+<tr><td>依赖拉取</td><td><span class="tag t-warn">需换镜像</span></td>
+<td>tuna 镜像<u>只代理 rustup 本体</u>，crate 仍走 <code>static.crates.io</code> → 超时失败；换 <code>rsproxy.cn</code> 后 8.5 s 编译完成。<strong>这是内网环境的真实坑，必须写进方案</strong></td></tr>
+<tr><td>PBKDF2-600k 耗时</td><td><span class="tag t-ok">421 ms</span></td>
+<td>比 PHP 快 2.1×。RustCrypto 的 <code>pbkdf2</code> 未做 SHA256-NI 特化，故略慢于 Go</td></tr>
+<tr><td>Argon2id 耗时</td><td><span class="tag t-ok">137–140 ms</span></td>
+<td><code>argon2</code> crate，<code>Params::new(65536, 2, 1, 32)</code></td></tr>
+<tr><td>互通</td><td><span class="tag t-ok">双向通过</span></td>
+<td>解 PHP 密文 OK；PHP 解 Rust 密文 OK</td></tr>
+</tbody>
+</table>
+
+<h3>3.4 三语言定位对比（基于实测）</h3>
+<table>
+<thead><tr><th style="width:130px">维度</th><th>PHP（现状）</th><th>Go</th><th>Rust</th></tr></thead>
+<tbody>
+<tr><td>PBKDF2-600k</td><td>892 ms</td><td><strong>327 ms</strong></td><td>421 ms</td></tr>
+<tr><td>Argon2id</td><td>已可用（91 ms）但代码没启用</td><td>183 ms</td><td>137 ms</td></tr>
+<tr><td>产物体积</td><td>源码 856 KB + 需装 PHP</td><td>2.0 MB 单文件</td><td><strong>591 KB</strong></td></tr>
+<tr><td>部署依赖</td><td>Web 服务器 + PHP + 扩展</td><td><strong>零依赖</strong></td><td><strong>零依赖</strong>（glibc 动态链接）</td></tr>
+<tr><td>交叉编译</td><td>不适用</td><td><strong>一条命令出三平台</strong></td><td>需 target + 链接器，较繁琐</td></tr>
+<tr><td>GUI 方案</td><td>浏览器天然跨端</td><td>Wails / Fyne / Gio</td><td><strong>Tauri（WebView）/ egui / Iced</strong></td></tr>
+<tr><td>加密生态</td><td>openssl + sodium（够用）</td><td>x/crypto（够用）</td><td><strong>RustCrypto + ring（最丰富、审计最多）</strong></td></tr>
+<tr><td>内存安全</td><td>无（解释执行，无指针算术）</td><td>GC，安全</td><td><strong>编译期保证 + 可 zeroize</strong></td></tr>
+<tr><td>开发速度</td><td>最快</td><td><strong>快</strong></td><td>慢（借用检查 + 生命周期）</td></tr>
+<tr><td>上手成本</td><td>老板已能读</td><td><strong>低</strong>（语法极简）</td><td>高</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>四、GitHub 同类项目借鉴</h2>
+
+<p>按「架构可借鉴度」排序，四个项目分别解决了不同层的问题。</p>
+
+<table>
+<thead><tr><th style="width:150px">项目</th><th style="width:70px">规模</th><th style="width:90px">栈</th><th>最值得抄的一点</th></tr></thead>
+<tbody>
+<tr>
+  <td><a href="https://github.com/keepassxreboot/keepassxc">KeePassXC</a></td>
+  <td>29.3k ★<br>C++ / Qt</td>
+  <td>桌面原生</td>
+  <td><strong>「条目级二次封装 + 数据库报告」</strong>：整个 KDBX 库加密，条目字段再各自加密；原生支持 Argon2d/id 参数可选、ChaCha20/Twofish 可选、YubiKey challenge-response。它的 <em>Database Reports</em>（密码健康度 / HIBP / 统计）正是本项目<u>已写后端却没接前端</u>的那批死接口该长成的样子。</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/fwdai/rowel">Rowel</a></td>
+  <td>953 ★<br>Rust + Tauri 2</td>
+  <td>跨端桌面</td>
+  <td><strong>「密钥不出 Rust 核心」</strong>：项目专门有一个 commit 叫 <em>Remove all renderer-side crypto</em>，把加解密全部移到 Rust 层，WebView 只做显示 —— 通过 IPC 拿已解密数据。<u>这正是本项目最该修的那条 P1（主密钥回传前端 + CSP 允许 unsafe-inline）的现成解法</u>。另有 SLSA provenance + CycloneDX SBOM + minisign 签名的供应链实践。</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/gopasspw/gopass">gopass</a></td>
+  <td>7.3k ★<br>Go</td>
+  <td>CLI / 团队</td>
+  <td><strong>「存储后端可插拔」</strong>：<code>backend.Storage</code> 接口抽象文件与 RCS 操作，git CLI 后端与纯 Go <code>go-git</code> 后端并存、按优先级自动降级（<code>storage.backend=gogit</code>）。对本项目的启示是：<u>把「加密 + 存储」与「API + 表现」彻底分成两个可替换层</u>，才能做到渐进式换语言而不停机。它还用 pure-Go D-Bus 实现了 Secret Service 守护进程，证明 Go 做系统集成完全够。</td>
+</tr>
+<tr>
+  <td><a href="https://github.com/cloudflare/gokey">gokey</a></td>
+  <td>2.4k ★<br>Go</td>
+  <td>CLI</td>
+  <td><strong>「无库（vaultless）确定性派生」</strong>：不存密码，用主种子 + 站点标识 + 计数器现场派生。<u>作为「免备份」的补充形态极有参考价值</u> —— 但代价是改密码就要换计数器，且无法存非确定性凭据（已有的第三方口令）。不建议替代现有模型，可作为可选的第二模式。</td>
+</tr>
+</tbody>
+</table>
+
+<div class="note">
+<strong>四个项目的共同信号</strong>：成熟密码管理器无一例外都是 <strong>「本地单文件 + 客户端解密 + 零后端依赖」</strong>。本项目当前是「服务端解密 + PHP 会话持密钥」，这在架构上就比桌面端方案多了一层攻击面（服务器被拿下 = 全量泄露）。若走重构，<u>把解密挪到客户端</u>比换语言更有价值 —— 而且这件事在 PHP 里就能做（WebCrypto + 服务端只存密文），不必等重构。
+</div>
+
+<!-- ============================================================ -->
+<h2>五、三条重构路线与推荐</h2>
+
+<div class="opts">
+  <div class="opt rec">
+    <div class="badge">推荐</div>
+    <h4>A. Go 后端 + 保留现有前端</h4>
+    <div class="meta">net/http + modernc/sqlite · 2 MB 单文件 · 约 2.5–4 周</div>
+    <p><strong>做什么</strong>：用 Go 重写 <code>api/*</code> 8 个端点与 <code>includes/*</code> 5 个类，<code>main.php</code>/<code>index.php</code> 改成 Go <code>html/template</code> 渲染同样结构，<code>app.js</code> 的 <code>apiCall</code> 契约保持不变（只改 base path）。</p>
+    <p><strong>为什么选它</strong>：① 实测互通已验证，<u>可与 PHP 并行读写同一份库</u>，零停机迁移；② 纯 Go SQLite 驱动免 CGO，实测通过；③ 一条命令交叉编译三平台，实测通过；④ 解锁从 892 ms 降到 327 ms；⑤ 语法简单，你自己能读懂改得动。</p>
+    <p><strong>代价</strong>：Go 的模板不如 PHP 混写灵活，<code>main.php</code> 里 1,085 行的「HTML+PHP 混杂」需要拆成模板片段，是主要工作量。</p>
+  </div>
+
+  <div class="opt">
+    <h4>B. Rust 核心 + Tauri 桌面端</h4>
+    <div class="meta">Tauri 2 + React/Svelte · 591 KB · 约 6–10 周</div>
+    <p><strong>做什么</strong>：Rust 层持全部密钥与加解密，前端只显示；跑成本地桌面应用而非 Web 服务。</p>
+    <p><strong>为什么值得</strong>：① 架构上最正确 —— 消除「服务端持密钥」这一整类攻击面（Rowel 已验证这条路）；② 产物最小、内存安全编译期保证；③ 加密生态最丰富。</p>
+    <p><strong>代价</strong>：① 失去「浏览器随时访问」的便利，手机端要另做（Tauri 2 支持 iOS/Android 但工程复杂度陡增）；② crate 拉取在内网需配 rsproxy 镜像（已实测踩到）；③ Rust 上手成本高，后续维护要靠 AI 辅助。</p>
+  </div>
+
+  <div class="opt">
+    <h4>C. 先修不重构（推荐前置）</h4>
+    <div class="meta">PHP 原地改 · 约 3–5 天 · 收益/成本比最高</div>
+    <p><strong>做什么</strong>：修 2 个 P1（<code>recovery_backup</code> 同步、Argon2id 常量名）+ 4 个 P2（外键 PRAGMA、密文判定收紧、WAL+busy_timeout、备份轮转）。</p>
+    <p><strong>为什么必须先做</strong>：这些缺陷<u>换语言一样会带着走</u> —— 常量名写错、漏更新字段、忘记开外键，都是设计问题不是语言问题。重建在 Go 或 Rust 上只会让同样的坑更难发现。</p>
+    <p><strong>额外收益</strong>：修完 Argon2id 后解锁从 892 ms 掉到 91 ms，<strong>比换 Go（327 ms）还快</strong>，性能诉求当场消失。</p>
+  </div>
+</div>
+
+<div class="ok">
+<strong>建议顺序：C → A（可选 B）。</strong><br>
+先花 3–5 天把 P1 修掉并让 Argon2id 真正生效 —— 此时性能已反超任何重写方案，重构的「性能动机」自动消解。<br>
+之后若仍想换语言（为了部署简化：单文件替换 PHP 环境；或为了长期可维护性），选 A 路线，<u>用已验证的互通性做灰度</u>：Go 与 PHP 同时指向同一份 SQLite，先在 Go 侧只接管只读接口（列表/搜索/详情），观察一周再切换写接口，最后下线 PHP。<br>
+B 路线只在「明确要做成桌面/离线应用、且愿意放弃 Web 访问」时才值得投入。
+</div>
+
+<h3>5.1 A 路线的灰度切分（基于互通性设计）</h3>
+<table>
+<thead><tr><th style="width:70px">阶段</th><th style="width:270px">Go 侧接管</th><th>验收判据</th></tr></thead>
+<tbody>
+<tr><td>P0</td><td>只读：<code>list</code> / <code>get</code> / <code>search</code> / <code>categories.list</code></td><td>与 PHP 返回逐字段 diff 为空；<code>decrypt</code> 仍由 PHP 处理</td></tr>
+<tr><td>P1</td><td><code>decrypt</code> + <code>generator</code> + <code>settings.stats</code></td><td>用同一 salt 派生主密钥与 PHP 字节一致（已有验证脚本）；解锁耗时从 892 ms 降到 327 ms</td></tr>
+<tr><td>P2</td><td>写：<code>add</code> / <code>update</code> / <code>delete</code> / 分类增删</td><td>PHP 读 Go 写的记录能解密，反之亦然（双向已验证）；写接口灰度期间禁推 webhook</td></tr>
+<tr><td>P3</td><td><code>backup</code> / <code>restore</code> / <code>import_export</code></td><td><code>VACUUM INTO</code> 快照与 PHP 版一致；还原后 <code>Database::close()</code> 等价的连接重建逻辑</td></tr>
+<tr><td>P4</td><td>认证与迁移：<code>auth</code> / <code>migrate</code> / <code>recovery</code></td><td>老库 <code>kdf_type</code> 为空时的 legacy PBKDF2-10000 路径也能解（三格式识别）；<code>recovery_backup</code> 同步已修</td></tr>
+<tr><td>P5</td><td>下线 PHP 服务</td><td>全量回归 + 备份验证，PHP 目录保留只读一段时间</td></tr>
+</tbody>
+</table>
+
+<h3>5.2 迁移时必须守住的三个坑（实测得来）</h3>
+<ol>
+<li><strong>v2 / legacy 双格式不能丢</strong>：现有代码能解三种格式（v3 有前缀 GCM、v2 CBC+HMAC、legacy 无前缀 GCM）。互通验证只覆盖了 v3。<u>移植时若只实现 v3，老用户数据会静默打不开</u>。必须连同「按首字节构造候选列表、失败回退」那段逻辑一起搬。</li>
+<li><strong>KDF 参数必须读库，不能写死</strong>：用户表里存着 <code>kdf_type</code> / <code>kdf_params</code> / <code>master_key_salt</code>。新实现要按库里的参数派生，而不是按代码里的常量 —— 否则已迁移用户会被要求重新输入，或直接解不开。</li>
+<li><strong>Go / Rust 的 Argon2 参数语义与 sodium 不同名</strong>：<code>sodium</code> 用 <code>opslimit</code> / <code>memlimit</code>，Go 用 <code>time</code> / <code>memory(KiB)</code> / <code>parallelism</code>，Rust 的 <code>Params</code> 又是 <code>(m_cost, t_cost, p_cost)</code>。相同数字填进去<strong>结果不同</strong>。若将来启用 Argon2id，必须在库里存<u>语义化参数名</u>（如 <code>{"algo":"argon2id","m":65536,"t":2,"p":1}</code>）而非裸数字，并做一次跨实现一致性测试。</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2>六、结论</h2>
+
+<table>
+<thead><tr><th style="width:200px">问题</th><th>答案</th></tr></thead>
+<tbody>
+<tr><td>有可操作页面吗</td><td><strong>有</strong>。已在 Ubuntu 24.04 上跑通：登录页、初始化页、主界面、8 个 API 全部可用，注册→登录→解锁→增删改查→备份链路完整体验。</td></tr>
+<tr><td>能换 Rust 或 Go 重写吗</td><td><strong>能，而且是低风险迁移</strong>。e 三语言互通已实测：主密钥字节一致，PHP/Go/Rust 密文可互相解密。v3 格式是纯标准 AES-GCM，无语言锁定。</td></tr>
+<tr><td>Go + GUI 还是 Rust + GUI</td><td>若目标仍是「浏览器可访问」→ <strong>Go 后端</strong>（改动最小、纯 Go SQLite、单文件交叉编译、语法可维护）。<br>若目标是「桌面/离线客户端 + 最高安全架构」→ <strong>Rust + Tauri</strong>（密钥不出核心，参考 Rowel；代价是失去 Web 访问、上手陡）。<br>两者都能做 GUI：Go 走 Wails/Fyne，Rust 走 Tauri/egui。</td></tr>
+<tr><td>最该先做的事</td><td><strong>不是重构，是修 P1。</strong>Argon2id 那个常量名修好后解锁从 892 ms → 91 ms，<u>比任何重写方案都快</u>；恢复密钥失效那条则直接关乎「账号能否得救」。这两件事换语言也一样要修，且 PHP 里改成本最低。</td></tr>
+<tr><td>GitHub 借鉴</td><td>架构上最该抄 <strong>Rowel「密钥不出核心」</strong>（对应本项目 P1 主密钥回传前端）与 <strong>gopass「存储后端可插拔」</strong>（对应渐进式换语言）；功能上抄 <strong>KeePassXC 的数据库健康报告</strong>（把已有死接口接通）。</td></tr>
+</tbody>
+</table>
+
+<footer>
+验证方法：跳板机 Ubuntu 24.04.4 上安装 PHP 8.3.6（apt，含 openssl/pdo_sqlite/sodium/sqlite3）、Go 1.23.4（dl.google.com 直装）、Rust 1.99.1（rustup + 清华镜像）；上传原始源码至 <code>/opt/lab/pm2.0</code>；用 curl 驱动真实 HTTP 请求完成全链路测试；用自写 Go/Rust 原型程序对 PHP 真实密文做双向解密验证。<br>
+所有数字均为本机实测（每组 3 次取样），非估算。产物留存：源码 <code>重构验证/原型源码/</code>，可复现脚本 <code>重构验证/脚本/</code>。<br>
+未验证项（明确标注）：Nginx/Apache 下的目录防护（仅在 <code>php -S</code> 下测到可下载）、前端 JS 交互（用 curl 测 API，未做浏览器端点击级验证）、v2/legacy 历史格式互通（库中只有 v3 数据）。
+</footer>
+
+</div>
+</body>
+</html>

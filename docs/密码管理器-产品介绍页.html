@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>密码管理器 — 一个不联网的本地密码保险箱</title>
+<style>
+/* ============================================================
+   极简克制·工具感
+   - 单一强调色（深栀绿），只用于 CTA 与极少数标记
+   - 中性色带品牌色偏移（oklch chroma 0.012），避免死灰
+   - 5 级字号，比例 1.32；正文固定 rem，标题用 clamp 流体
+   - 垂直节奏：正文行高 1.62 → 基础间距 28px 的倍数
+   ============================================================ */
+:root {
+  /* 中性色：带极轻绿偏移（hue 158），不是纯灰 */
+  --ink-0:  oklch(99.2% 0.004 158);   /* 最高亮面 */
+  --ink-1:  oklch(97.4% 0.006 158);   /* 页面底 */
+  --ink-2:  oklch(94.2% 0.008 158);   /* 次级面 */
+  --ink-3:  oklch(89.0% 0.010 158);   /* 分隔线 */
+  --ink-4:  oklch(78.0% 0.012 158);   /* 边框 */
+  --ink-6:  oklch(58.0% 0.014 158);   /* 弱文本 */
+  --ink-8:  oklch(38.0% 0.014 158);   /* 次级文本 */
+  --ink-10: oklch(21.0% 0.014 158);   /* 正文 */
+
+  /* 强调色：深栀绿，仅用于 CTA / 关键数字 / 提示点 */
+  --brand:      oklch(46% 0.088 158);
+  --brand-deep: oklch(36% 0.080 158);
+  --brand-soft: oklch(94% 0.020 158);
+
+  /* 语义：克制使用 */
+  --warn: oklch(62% 0.115 62);
+  --bad:  oklch(52% 0.145 28);
+
+  /* 字体：中文优先系统黑体，英文用 Variable 无衬线 */
+  --f-sans: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+            "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --f-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas,
+            "Liberation Mono", monospace;
+
+  /* 字号（比例 ≈1.32） */
+  --t-xs:   0.8125rem;
+  --t-sm:   0.875rem;
+  --t-base: 1rem;
+  --t-lg:   1.3125rem;
+  --t-xl:   1.75rem;
+  --t-2xl:  clamp(2.1rem, 1.4rem + 2.6vw, 3.15rem);
+  --t-3xl:  clamp(2.6rem, 1.5rem + 4.4vw, 4.6rem);
+
+  /* 间距：28px 基数 */
+  --s1: 0.4375rem;
+  --s2: 0.875rem;
+  --s3: 1.3125rem;
+  --s4: 1.75rem;
+  --s5: 2.625rem;
+  --s6: 3.5rem;
+  --s7: 5.25rem;
+  --s8: 7rem;
+
+  --maxw: 1120px;
+  --dur: 220ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);  /* ease-out-quart */
+}
+
+* { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: var(--f-sans);
+  font-size: var(--t-base);
+  line-height: 1.62;
+  color: var(--ink-10);
+  background: var(--ink-1);
+  font-kerning: normal;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- 基础排版 ---------- */
+h1, h2, h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+  line-height: 1.16;
+}
+p { margin: 0; }
+a { color: inherit; }
+strong { font-weight: 620; color: var(--ink-10); }
+code, .mono {
+  font-family: var(--f-mono);
+  font-size: 0.92em;
+  font-variant-ligatures: none;
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 clamp(1.25rem, 4vw, 2.75rem);
+}
+
+.eyebrow {
+  font-size: var(--t-xs);
+  font-weight: 560;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-6);
+}
+.eyebrow-tight { margin-bottom: var(--s2); }
+
+/* ---------- 顶栏 ---------- */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--ink-1);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--dur) var(--ease),
+              background var(--dur) var(--ease);
+}
+/* 有 backdrop-filter 支持时才用半透明+模糊，否则维持不透明。
+   只写半透明而不写模糊，下层文字会直接穿透到顶栏上（实测踩到）。 */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .nav {
+    background: color-mix(in oklch, var(--ink-1) 84%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    backdrop-filter: saturate(180%) blur(14px);
+  }
+}
+.nav.scrolled {
+  border-bottom-color: var(--ink-3);
+}
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  height: 62px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-decoration: none;
+}
+.brand svg { display: block; }
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  font-size: var(--t-sm);
+  color: var(--ink-8);
+}
+.nav-links a {
+  text-decoration: none;
+  transition: color var(--dur) var(--ease);
+}
+.nav-links a:hover { color: var(--ink-10); }
+
+@media (max-width: 720px) {
+  .nav-links .hide-sm { display: none; }
+}
+
+/* ---------- 按钮 ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.72rem 1.28rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: var(--t-sm);
+  font-weight: 560;
+  letter-spacing: -0.006em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease),
+              border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease),
+              transform var(--dur) var(--ease);
+  white-space: nowrap;
+}
+.btn-primary {
+  background: var(--brand);
+  color: oklch(98% 0.01 158);
+}
+.btn-primary:hover {
+  background: var(--brand-deep);
+  transform: translateY(-1px);
+}
+.btn-ghost {
+  background: transparent;
+  border-color: var(--ink-4);
+  color: var(--ink-10);
+}
+.btn-ghost:hover {
+  border-color: var(--ink-6);
+  background: var(--ink-0);
+}
+
+/* ---------- 首屏 ---------- */
+.hero {
+  padding-top: clamp(3rem, 7vw, 5.5rem);
+  padding-bottom: clamp(3rem, 7vw, 6rem);
+}
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: clamp(2rem, 5vw, 4.5rem);
+  align-items: center;
+}
+@media (max-width: 900px) {
+  .hero-grid { grid-template-columns: 1fr; gap: var(--s5); }
+}
+
+.hero h1 {
+  font-size: var(--t-3xl);
+  letter-spacing: -0.032em;
+  margin: var(--s2) 0 var(--s3);
+}
+.hero h1 em {
+  font-style: normal;
+  color: var(--brand);
+}
+.hero-lede {
+  font-size: var(--t-lg);
+  line-height: 1.52;
+  color: var(--ink-8);
+  max-width: 34ch;
+  letter-spacing: -0.008em;
+  /* 避免末行只剩一两个字（中文无空格，靠 pretty 让断行更均衡） */
+  text-wrap: pretty;
+  word-break: keep-all;
+}
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s4);
+}
+.hero-note {
+  margin-top: var(--s3);
+  font-size: var(--t-xs);
+  color: var(--ink-6);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+/* 首屏右侧：密文可视化卡片 */
+.vault-viz {
+  border: 1px solid var(--ink-3);
+  border-radius: 12px;
+  background: var(--ink-0);
+  overflow: hidden;
+  box-shadow: 0 1px 2px oklch(20% 0.02 158 / 0.04),
+              0 12px 32px -12px oklch(20% 0.02 158 / 0.10);
+}
+.viz-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--ink-3);
+  background: var(--ink-2);
+}
+.viz-dots { display: flex; gap: 5px; }
+.viz-dots span {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.viz-title {
+  font-size: 0.75rem;
+  color: var(--ink-6);
+  font-family: var(--f-mono);
+}
+.viz-body { padding: 1.15rem 1.15rem 1.25rem; }
+
+.field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px dashed var(--ink-3);
+  font-size: var(--t-xs);
+}
+.field-row:last-of-type { border-bottom: 0; }
+.field-k {
+  flex: 0 0 4.5rem;
+  color: var(--ink-6);
+}
+.field-v {
+  font-family: var(--f-mono);
+  font-size: 0.75rem;
+  color: var(--ink-10);
+  overflow-wrap: anywhere;
+}
+.field-v.plain {
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  padding: 0.08rem 0.35rem;
+  border-radius: 3px;
+  font-weight: 500;
+}
+.field-v.cipher {
+  color: var(--ink-6);
+  letter-spacing: 0.02em;
+}
+
+/* 密文变化动效 */
+.cipher-stage {
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.85rem;
+  background: var(--ink-2);
+  border-radius: 7px;
+  border: 1px solid var(--ink-3);
+}
+.cipher-label {
+  font-size: 0.6875rem;
+  color: var(--ink-6);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.45rem;
+}
+.cipher-line {
+  font-family: var(--f-mono);
+  font-size: 0.6875rem;
+  line-height: 1.75;
+  color: var(--ink-6);
+  overflow-wrap: anywhere;
+  /* 固定两行高度：密文滚动时容器不跳动，且避免右侧大片留白 */
+  min-height: 2.9em;
+  display: block;
+  transition: color 120ms linear;
+}
+.cipher-line.live { color: var(--ink-8); }
+
+/* ---------- 分隔线 ---------- */
+.rule {
+  height: 1px;
+  background: var(--ink-3);
+  border: 0;
+  margin: 0;
+}
+
+/* ---------- 通用区块 ---------- */
+.section {
+  padding: clamp(3rem, 6.5vw, 5.5rem) 0;
+}
+.section-head {
+  max-width: 62ch;
+  margin-bottom: var(--s5);
+}
+.section-head h2 {
+  font-size: var(--t-2xl);
+  letter-spacing: -0.028em;
+  margin: var(--s2) 0 var(--s2);
+  /* 中文标题断行控制：优先在标点/短语处断，避免「明/文」这种单字孤行 */
+  word-break: keep-all;
+  line-break: strict;
+  text-wrap: pretty;
+}
+.section-head p {
+  font-size: var(--t-base);
+  color: var(--ink-8);
+  line-height: 1.66;
+  max-width: 56ch;
+}
+
+/* ---------- 能力网格 ---------- */
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--ink-3);
+}
+@media (max-width: 860px) {
+  .cap-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .cap-grid { grid-template-columns: 1fr; }
+}
+.cap {
+  padding: var(--s4) var(--s4) var(--s4) 0;
+  border-bottom: 1px solid var(--ink-3);
+  border-right: 1px solid var(--ink-3);
+  padding-left: var(--s4);
+}
+.cap:first-child { padding-left: 0; }
+.cap:nth-child(3n) { border-right: 0; padding-right: 0; }
+@media (max-width: 860px) {
+  .cap:nth-child(3n) { border-right: 1px solid var(--ink-3); padding-right: var(--s4); }
+  .cap:nth-child(2n) { border-right: 0; padding-right: 0; }
+  .cap:nth-child(2n+1) { padding-left: 0; }
+}
+@media (max-width: 560px) {
+  .cap, .cap:nth-child(2n), .cap:nth-child(3n) {
+    border-right: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+.cap-idx {
+  font-family: var(--f-mono);
+  font-size: 0.6875rem;
+  color: var(--ink-4);
+  letter-spacing: 0.06em;
+}
+.cap h3 {
+  font-size: var(--t-base);
+  font-weight: 600;
+  margin: 0.55rem 0 0.4rem;
+  letter-spacing: -0.012em;
+}
+.cap p {
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  color: var(--ink-8);
+}
+
+/* ---------- 安全架构：非对称双栏 ---------- */
+.sec-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: clamp(2rem, 5vw, 4.5rem);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .sec-grid { grid-template-columns: 1fr; gap: var(--s5); }
+}
+
+/* 加密流程：竖向步骤 */
+.flow { display: grid; gap: 0; }
+.flow-step {
+  display: grid;
+  grid-template-columns: 2.1rem minmax(0, 1fr);
+  gap: var(--s2);
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--ink-3);
+}
+.flow-step:last-child { border-bottom: 0; }
+.flow-num {
+  font-family: var(--f-mono);
+  font-size: 0.6875rem;
+  color: var(--brand);
+  font-weight: 600;
+  padding-top: 0.28rem;
+  letter-spacing: 0.04em;
+}
+.flow-step h4 {
+  margin: 0 0 0.3rem;
+  font-size: var(--t-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.flow-step p {
+  font-size: var(--t-sm);
+  color: var(--ink-8);
+  line-height: 1.62;
+}
+.flow-step .spec {
+  display: inline-block;
+  margin-top: 0.4rem;
+  font-family: var(--f-mono);
+  font-size: 0.6875rem;
+  color: var(--ink-6);
+  background: var(--ink-2);
+  border: 1px solid var(--ink-3);
+  padding: 0.16rem 0.42rem;
+  border-radius: 4px;
+}
+
+/* 参数表 */
+.params {
+  border: 1px solid var(--ink-3);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ink-0);
+}
+.params-head {
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--ink-3);
+  background: var(--ink-2);
+  font-size: var(--t-xs);
+  color: var(--ink-6);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.params table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-sm);
+}
+.params th, .params td {
+  text-align: left;
+  padding: 0.66rem 1rem;
+  border-bottom: 1px solid var(--ink-3);
+  vertical-align: top;
+}
+.params tr:last-child td { border-bottom: 0; }
+.params th {
+  font-weight: 560;
+  color: var(--ink-6);
+  font-size: var(--t-xs);
+  width: 42%;
+}
+.params td {
+  font-family: var(--f-mono);
+  font-size: 0.75rem;
+  color: var(--ink-10);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 威胁模型：清单 ---------- */
+.threat {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s4);
+}
+@media (max-width: 760px) { .threat { grid-template-columns: 1fr; } }
+
+.threat-col h3 {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: var(--s2);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.tag-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.tag-dot.ok { background: var(--brand); }
+.tag-dot.no { background: var(--warn); }
+
+.threat-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--t-sm);
+  color: var(--ink-8);
+}
+.threat-list li {
+  padding: 0.62rem 0;
+  border-bottom: 1px solid var(--ink-3);
+  line-height: 1.58;
+  display: grid;
+  grid-template-columns: 1.1rem minmax(0, 1fr);
+  gap: 0.5rem;
+}
+.threat-list li:last-child { border-bottom: 0; }
+.threat-list .mk {
+  font-family: var(--f-mono);
+  font-size: 0.75rem;
+  line-height: 1.65;
+}
+.threat-list .mk.ok { color: var(--brand); }
+.threat-list .mk.no { color: var(--warn); }
+
+/* ---------- 对比：两版本 ---------- */
+.versus {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3);
+}
+@media (max-width: 760px) { .versus { grid-template-columns: 1fr; } }
+
+.card {
+  border: 1px solid var(--ink-3);
+  border-radius: 10px;
+  background: var(--ink-0);
+  padding: var(--s4);
+  transition: border-color var(--dur) var(--ease),
+              box-shadow var(--dur) var(--ease);
+}
+.card:hover {
+  border-color: var(--ink-4);
+  box-shadow: 0 8px 24px -14px oklch(20% 0.02 158 / 0.16);
+}
+.card-tag {
+  font-size: var(--t-xs);
+  color: var(--ink-6);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-family: var(--f-mono);
+}
+.card h3 {
+  font-size: var(--t-lg);
+  margin: 0.4rem 0 0.55rem;
+  letter-spacing: -0.018em;
+}
+.card p {
+  font-size: var(--t-sm);
+  color: var(--ink-8);
+  line-height: 1.62;
+}
+.card-spec {
+  margin-top: var(--s3);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--ink-3);
+  display: grid;
+  gap: 0.34rem;
+  font-size: 0.75rem;
+  color: var(--ink-6);
+  font-family: var(--f-mono);
+}
+.card-spec span::before {
+  content: "→ ";
+  color: var(--brand);
+}
+
+/* ---------- 下载 ---------- */
+.download {
+  padding: clamp(3rem, 6.5vw, 5rem) 0;
+}
+.dl-panel {
+  border: 1px solid var(--ink-3);
+  border-radius: 14px;
+  background: var(--ink-0);
+  padding: clamp(1.75rem, 4vw, 3rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: clamp(1.75rem, 4vw, 3.5rem);
+  align-items: center;
+}
+@media (max-width: 820px) {
+  .dl-panel { grid-template-columns: 1fr; gap: var(--s4); }
+}
+.dl-panel h2 {
+  font-size: var(--t-2xl);
+  letter-spacing: -0.028em;
+  margin-bottom: var(--s2);
+}
+.dl-panel p {
+  font-size: var(--t-sm);
+  color: var(--ink-8);
+  line-height: 1.64;
+  max-width: 40ch;
+}
+.dl-actions {
+  display: grid;
+  gap: var(--s2);
+}
+.dl-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: 0.92rem 1.1rem;
+  border: 1px solid var(--ink-4);
+  border-radius: 9px;
+  text-decoration: none;
+  background: var(--ink-1);
+  transition: border-color var(--dur) var(--ease),
+              background var(--dur) var(--ease),
+              transform var(--dur) var(--ease);
+}
+.dl-btn:hover {
+  border-color: var(--brand);
+  background: var(--ink-0);
+  transform: translateY(-1px);
+}
+.dl-btn-main {
+  display: grid;
+  gap: 0.16rem;
+}
+.dl-btn-name {
+  font-size: var(--t-sm);
+  font-weight: 580;
+  letter-spacing: -0.008em;
+}
+.dl-btn-meta {
+  font-size: var(--t-xs);
+  color: var(--ink-6);
+  font-family: var(--f-mono);
+}
+.dl-arrow {
+  color: var(--ink-6);
+  transition: color var(--dur) var(--ease),
+              transform var(--dur) var(--ease);
+  flex: 0 0 auto;
+}
+.dl-btn:hover .dl-arrow {
+  color: var(--brand);
+  transform: translateX(2px);
+}
+
+/* ---------- 页脚 ---------- */
+.foot {
+  border-top: 1px solid var(--ink-3);
+  padding: var(--s5) 0 var(--s5);
+}
+.foot-inner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s3);
+  align-items: flex-start;
+  font-size: var(--t-xs);
+  color: var(--ink-6);
+}
+.foot-brand {
+  display: grid;
+  gap: 0.45rem;
+  max-width: 32ch;
+}
+.foot-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--ink-8);
+  font-weight: 580;
+}
+.foot-meta {
+  display: grid;
+  gap: 0.3rem;
+  text-align: right;
+  font-family: var(--f-mono);
+}
+@media (max-width: 620px) {
+  .foot-meta { text-align: left; }
+}
+
+/* ---------- 滚动入场（渐进增强）----------
+   关键：默认必须可见。只有 JS 确认可用时，才由 <html class="js"> 启用
+   初始隐藏态。否则一旦 IntersectionObserver 未触发、JS 被拦截、
+   或页面在特殊环境渲染，内容会永久停在 opacity:0 —— 整页空白。
+   「内容可见性绝不能依赖动画」。 */
+.reveal {
+  opacity: 1;
+  transform: none;
+}
+html.js .reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 620ms var(--ease), transform 620ms var(--ease);
+}
+html.js .reveal.in {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.js .reveal { opacity: 1; transform: none; transition: none; }
+}
+
+/* ---------- 焦点可见 ---------- */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+</style>
+</head>
+<body>
+
+<!-- ============ 顶栏 ============ -->
+<header class="nav" id="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top" aria-label="密码管理器 首页">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2.6 20 5.4v6.1c0 4.6-3.3 8.6-8 9.9-4.7-1.3-8-5.3-8-9.9V5.4L12 2.6Z"
+              fill="currentColor" opacity="0.14"/>
+        <path d="M12 2.6 20 5.4v6.1c0 4.6-3.3 8.6-8 9.9-4.7-1.3-8-5.3-8-9.9V5.4L12 2.6Z"
+              stroke="currentColor" stroke-width="1.4"/>
+        <circle cx="12" cy="10.4" r="1.85" fill="currentColor"/>
+        <path d="M12 12.1v3.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      </svg>
+      密码管理器
+    </a>
+    <nav class="nav-links">
+      <a href="#capabilities">能力</a>
+      <a href="#security" class="hide-sm">安全</a>
+      <a href="#threat" class="hide-sm">边界</a>
+      <a href="#download">下载</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ 首屏 ============ -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">Windows · 本地单机 · 无需联网</p>
+        <h1>密码存在你自己<em>手里</em>的机器上。</h1>
+        <p class="hero-lede">
+          单文件桌面程序，双击即用。密码用 AES-256-GCM 加密后只写进本地一个
+          SQLite 文件，不上传、不同步、不联网。
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#download">
+            下载 Windows 版
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 4v12m0 0 4.5-4.5M12 16l-4.5-4.5M5 19.5h14"
+                    stroke="currentColor" stroke-width="1.7"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+          <a class="btn btn-ghost" href="#security">看加密设计</a>
+        </div>
+        <p class="hero-note">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m4.5 12.5 5 5 10-11" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          无需安装 · 无需 .NET / VC++ 运行库 · 删除文件夹即卸载干净
+        </p>
+      </div>
+
+      <!-- 密文可视化 -->
+      <div class="vault-viz" aria-hidden="true">
+        <div class="viz-head">
+          <div class="viz-dots"><span></span><span></span><span></span></div>
+          <div class="viz-title">data / passwords.db</div>
+        </div>
+        <div class="viz-body">
+          <div class="field-row">
+            <span class="field-k">标题</span>
+            <span class="field-v plain">招商银行</span>
+          </div>
+          <div class="field-row">
+            <span class="field-k">用户名</span>
+            <span class="field-v plain">me@corp.com</span>
+          </div>
+          <div class="field-row">
+            <span class="field-k">密码</span>
+            <span class="field-v cipher">••••••••</span>
+          </div>
+
+          <div class="cipher-stage">
+            <div class="cipher-label">磁盘上实际存储的密文</div>
+            <div class="cipher-line" id="cipherLine">AwA8u3kQZ1mR0xTfJ2pLw9dHs4nYbV6cK...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 能力 ============ -->
+  <section class="section" id="capabilities">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="eyebrow">能力</p>
+        <h2>日常需要用到的，一件不少。</h2>
+        <p>
+          不是演示品。分类、搜索、密码生成、历史版本、回收站、备份轮转、
+          导入导出——一个长期使用的密码本该有的都在。
+        </p>
+      </div>
+
+      <div class="cap-grid">
+        <div class="cap reveal">
+          <div class="cap-idx">01</div>
+          <h3>分类与搜索</h3>
+          <p>两级分类，标题 / 用户名 / 网址 / 备注全字段即时过滤。列表按更新时间排序，分页浏览。</p>
+        </div>
+        <div class="cap reveal">
+          <div class="cap-idx">02</div>
+          <h3>按需解密</h3>
+          <p>列表默认只显示圆点。点「查看」才临时解密该条，15 秒后自动遮回，避免明文长时间挂在屏幕上。</p>
+        </div>
+        <div class="cap reveal">
+          <div class="cap-idx">03</div>
+          <h3>密码生成器</h3>
+          <p>可指定长度与字符集，可排除易混淆字符（0/O、1/l）。生成结果直接填入条目。</p>
+        </div>
+        <div class="cap reveal">
+          <div class="cap-idx">04</div>
+          <h3>历史版本</h3>
+          <p>修改密码时旧值写入 password_history，改错可回溯，不必担心覆盖后找不回原密码。</p>
+        </div>
+        <div class="cap reveal">
+          <div class="cap-idx">05</div>
+          <h3>回收站</h3>
+          <p>删除先进回收站，可恢复；二次确认才永久清除。误删不会立刻造成数据损失。</p>
+        </div>
+        <div class="cap reveal">
+          <div class="cap-idx">06</div>
+          <h3>备份与轮转</h3>
+          <p>登录自动备份，也可手动触发。基于 VACUUM INTO 生成一致性快照，自动保留最近 30 份。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 安全架构 ============ -->
+  <section class="section" id="security">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="eyebrow">安全设计</p>
+        <h2>密钥不落盘，明文不出进程。</h2>
+        <p>
+          这里是它和「浏览器记住密码」的根本区别：主密钥只存在于本地进程内存中，
+          加密与解密都在这个进程里完成，界面拿到的始终只是单条结果。
+        </p>
+      </div>
+
+      <div class="sec-grid">
+        <div class="reveal">
+          <div class="flow">
+            <div class="flow-step">
+              <div class="flow-num">01</div>
+              <div>
+                <h4>主密钥派生</h4>
+                <p>输入的密码经 Argon2id 派生出主密钥。库中只存 salt 与 KDF 参数，不存密钥本身。</p>
+                <span class="spec">Argon2id · t=2 · m=64 MiB · p=1</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">02</div>
+              <div>
+                <h4>逐条认证加密</h4>
+                <p>每个字段独立加密，密文带版本号、IV 与认证标签。篡改任一字节都会在解密时被拒绝。</p>
+                <span class="spec">AES-256-GCM · IV 12B · Tag 16B</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">03</div>
+              <div>
+                <h4>明文只在进程内</h4>
+                <p>解密由本地服务进程完成，页面通过回环接口取单条结果。主密钥从不进入浏览器上下文。</p>
+                <span class="spec">listen 127.0.0.1 · 随机端口</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <div class="flow-num">04</div>
+              <div>
+                <h4>闲置自动上锁</h4>
+                <p>闲置 15 分钟主密钥失效，需重新输入才能再解密。点「锁定」会立即抹掉页面上已显示的明文。</p>
+                <span class="spec">auto-lock 15 min · session 30 min</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="reveal">
+          <div class="params">
+            <div class="params-head">密码学参数</div>
+            <table>
+              <tbody>
+                <tr>
+                  <th>对称加密</th>
+                  <td>AES-256-GCM（认证加密）</td>
+                </tr>
+                <tr>
+                  <th>密钥派生</th>
+                  <td>Argon2id，内存 64 MiB，迭代 2</td>
+                </tr>
+                <tr>
+                  <th>密文结构</th>
+                  <td>0x03 ‖ IV(12) ‖ Tag(16) ‖ CT</td>
+                </tr>
+                <tr>
+                  <th>主密钥存储</th>
+                  <td>不落盘，仅进程内存</td>
+                </tr>
+                <tr>
+                  <th>监听地址</th>
+                  <td>127.0.0.1（随机端口）</td>
+                </tr>
+                <tr>
+                  <th>登录限流</th>
+                  <td>按 IP 10 次/分，按用户 5 次/5 分</td>
+                </tr>
+                <tr>
+                  <th>内容安全策略</th>
+                  <td>style-src 'self'，禁内联样式</td>
+                </tr>
+                <tr>
+                  <th>表单防护</th>
+                  <td>会话 + CSRF 令牌校验</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 威胁模型（边界） ============ -->
+  <section class="section" id="threat">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="eyebrow">边界</p>
+        <h2>它保护什么，不保护什么。</h2>
+        <p>
+          一个安全工具的价值，一半在于说清它防不住什么。以下是明确的能力边界，
+          不含含糊其辞的承诺。
+        </p>
+      </div>
+
+      <div class="threat">
+        <div class="threat-col reveal">
+          <h3><span class="tag-dot ok"></span>这些场景它能挡住</h3>
+          <ul class="threat-list">
+            <li><span class="mk ok">✓</span><span>数据库文件被拷走——没有主密钥密码，密文无法解开。</span></li>
+            <li><span class="mk ok">✓</span><span>局域网其它机器访问——只监听回环地址，外部连不上。</span></li>
+            <li><span class="mk ok">✓</span><span>密文被改动一字节——认证标签校验失败，解密直接报错。</span></li>
+            <li><span class="mk ok">✓</span><span>网页侧脚本读取主密钥——主密钥不在浏览器里，拿不到。</span></li>
+            <li><span class="mk ok">✓</span><span>离开座位后被翻看——闲置 15 分钟自动上锁。</span></li>
+            <li><span class="mk ok">✓</span><span>暴力猜测登录——按 IP 与账号双维度限流。</span></li>
+          </ul>
+        </div>
+
+        <div class="threat-col reveal">
+          <h3><span class="tag-dot no"></span>这些场景它挡不住</h3>
+          <ul class="threat-list">
+            <li><span class="mk no">✕</span><span>机器已被植入键盘记录或内存读取程序——运行期明文可被截获。</span></li>
+            <li><span class="mk no">✕</span><span>主密钥密码遗忘——无任何后门可恢复，数据永久无法解开。</span></li>
+            <li><span class="mk no">✕</span><span>备份文件被他人取得——备份是不加密的完整库副本，需自行妥善保管。</span></li>
+            <li><span class="mk no">✕</span><span>使用期间有人直接看你的屏幕——明文显示时仍然可见。</span></li>
+            <li><span class="mk no">✕</span><span>多设备同步——设计上就是单机，不做云同步。</span></li>
+            <li><span class="mk no">✕</span><span>多人共用同一保险箱——单账户模型，非团队协作工具。</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 两个版本 ============ -->
+  <section class="section" id="editions">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="eyebrow">两个版本</p>
+        <h2>同一个数据库，两种界面。</h2>
+        <p>
+          两者共用相同的密码学实现与数据格式，<code>passwords.db</code>
+          可互换使用。区别只在界面承载方式。均为单文件 exe，双击即启动。
+        </p>
+      </div>
+
+      <div class="versus">
+        <article class="card reveal">
+          <div class="card-tag">vaultgui.exe</div>
+          <h3>原生窗口版</h3>
+          <p>
+            独立应用窗口，无地址栏、无标签栏，外观与普通桌面软件一致，
+            与你日常浏览器的书签和历史完全隔离。推荐日常使用。
+          </p>
+          <div class="card-spec">
+            <span>独立窗口（App 模式）</span>
+            <span>单一实例保护</span>
+            <span>无控制台黑框</span>
+          </div>
+        </article>
+
+        <article class="card reveal">
+          <div class="card-tag">vaultd.exe</div>
+          <h3>浏览器版</h3>
+          <p>
+            启动后在你的默认浏览器里打开界面，适合已经习惯浏览器工作流、
+            或希望用自己浏览器扩展辅助的场景。
+          </p>
+          <div class="card-spec">
+            <span>默认浏览器承载</span>
+            <span>关闭页面即结束会话</span>
+            <span>无控制台黑框</span>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 下载 ============ -->
+  <section class="download" id="download">
+    <div class="wrap">
+      <div class="dl-panel reveal">
+        <div>
+          <p class="eyebrow eyebrow-tight">下载</p>
+          <h2>解压，双击，开始用。</h2>
+          <p>
+            每个包内只有一个 exe 与说明文档。不需要安装程序、不写注册表、
+            不在系统目录留任何文件。删除整个文件夹即完成卸载。
+          </p>
+        </div>
+        <div class="dl-actions">
+          <a class="dl-btn" href="密码管理器-原生窗口版-Windows.zip" download>
+            <span class="dl-btn-main">
+              <span class="dl-btn-name">原生窗口版</span>
+              <span class="dl-btn-meta">Windows x64 · 4.14 MB</span>
+            </span>
+            <svg class="dl-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 12h13m0 0-5.2-5.2M18 12l-5.2 5.2"
+                    stroke="currentColor" stroke-width="1.6"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+          <a class="dl-btn" href="密码管理器-桌面版-Windows.zip" download>
+            <span class="dl-btn-main">
+              <span class="dl-btn-name">浏览器版</span>
+              <span class="dl-btn-meta">Windows x64 · 4.15 MB</span>
+            </span>
+            <svg class="dl-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 12h13m0 0-5.2-5.2M18 12l-5.2 5.2"
+                    stroke="currentColor" stroke-width="1.6"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ 页脚 ============ -->
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <div class="foot-brand">
+      <div class="foot-brand-row">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 2.6 20 5.4v6.1c0 4.6-3.3 8.6-8 9.9-4.7-1.3-8-5.3-8-9.9V5.4L12 2.6Z"
+                stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        密码管理器
+      </div>
+      <span>
+        端到端本地加密的个人密码保险箱。数据格式与早期 PHP 版兼容，
+        同一 <code>passwords.db</code> 可双向读写。
+      </span>
+    </div>
+    <div class="foot-meta">
+      <span>Go 静态编译 · 单文件</span>
+      <span>AES-256-GCM / Argon2id</span>
+      <span>Windows 10 / 11 · x64</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ---------- 顶栏滚动状态 ---------- */
+(function () {
+  var nav = document.getElementById('nav');
+  var onScroll = function () {
+    if (window.scrollY > 8) nav.classList.add('scrolled');
+    else nav.classList.remove('scrolled');
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+
+/* ---------- 滚动入场（渐进增强）----------
+   先判断能力：只有 IntersectionObserver 可用时才启用隐藏-淡入。
+   并且加两道兜底：
+     1) 入场失败也要在 1.2s 后全部显示（防止观察器漏触发）
+     2) 页面不可见/打印时全部显示
+   原则：内容可见性优先于动效。 */
+(function () {
+  var root = document.documentElement;
+  var els = document.querySelectorAll('.reveal');
+
+  function showAll() {
+    els.forEach(function (el) { el.classList.add('in'); });
+  }
+
+  if (!('IntersectionObserver' in window)) {
+    // 不支持观察器：全部直接可见，不加 .js 类
+    return;
+  }
+
+  root.classList.add('js');
+
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    });
+  }, { rootMargin: '0px 0px -10% 0px', threshold: 0.05 });
+
+  els.forEach(function (el) { io.observe(el); });
+
+  // 兜底一：1.2 秒后仍未 in 的，强制显示
+  setTimeout(function () {
+    els.forEach(function (el) {
+      if (!el.classList.contains('in')) el.classList.add('in');
+    });
+  }, 1200);
+})();
+
+/* ---------- 密文滚动演示 ----------
+   用真实的密文结构（0x03 版本前缀 + base64）生成视觉文本，
+   让「磁盘上看到的东西」这件事变得可感知。不是假数据图。 */
+(function () {
+  var line = document.getElementById('cipherLine');
+  if (!line) return;
+
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+  function randCipher() {
+    // 版本前缀 0x03 的 base64 首字符固定为 'A'，其余随机
+    var s = 'Aw';
+    var n = 180;
+    for (var i = 0; i < n; i++) {
+      s += b64[(Math.random() * b64.length) | 0];
+    }
+    return s;
+  }
+
+  if (reduce) {
+    line.textContent = randCipher();
+    return;
+  }
+
+  var text = randCipher();
+  var pos = 0;
+  // 可见字符数按容器实际宽度算，避免桌面端右侧大片留白
+  function visibleCount() {
+    var w = line.clientWidth || 320;
+    // 等宽字符宽度 ≈ fontSize * 0.6，留 3% 余量
+    var charW = parseFloat(getComputedStyle(line).fontSize) * 0.6;
+    return Math.max(28, Math.floor((w / charW) * 1.02));
+  }
+  var visible = visibleCount();
+  var speed = 1;         // 每帧推进
+
+  window.addEventListener('resize', function () {
+    visible = visibleCount();
+  });
+
+  function frame() {
+    pos += speed;
+    if (pos > text.length + visible) {
+      text = randCipher();
+      pos = 0;
+    }
+    var start = Math.max(0, pos - visible);
+    var slice = text.slice(start, pos);
+    // 尾部留一点抖动感：最后 6 个字符随机化
+    if (slice.length > 6 && pos < text.length) {
+      var head = slice.slice(0, slice.length - 6);
+      var tail = slice.slice(-6).split('').map(function (ch) {
+        return Math.random() < 0.18
+          ? b64[(Math.random() * b64.length) | 0]
+          : ch;
+      }).join('');
+      slice = head + tail;
+    }
+    line.textContent = slice || text.slice(0, visible);
+    line.classList.add('live');
+    setTimeout(frame, 55);
+  }
+  frame();
+})();
+</script>
+</body>
+</html>

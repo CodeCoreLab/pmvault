@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>跨平台编译与开发流程可行性评估</title>
+<style>
+:root{
+  --ink:#1f2933;--ink-2:#52606d;--ink-3:#7b8794;
+  --line:#e2e8ee;--line-2:#cfd8e3;--bg:#f7f9fb;--card:#fff;--soft:#f1f5f9;
+  --brand:#2f6f5e;--brand-soft:#e8f2ee;
+  --red:#c0453f;--red-soft:#fdeceb;--amber:#a9762a;--amber-soft:#fdf4e3;
+  --green:#2f7a4f;--green-soft:#eaf6ef;--blue:#2f5d94;--blue-soft:#eaf1fa;
+  --mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:1120px;margin:0 auto;padding:32px 24px 72px}
+h1{font-size:26px;line-height:1.35;margin:0 0 6px;letter-spacing:-.2px}
+h2{font-size:19px;margin:46px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--brand);display:inline-block}
+h3{font-size:15.5px;margin:26px 0 8px}
+h4{font-size:14px;margin:18px 0 6px;color:var(--ink-2)}
+p{margin:10px 0}
+.sub{color:var(--ink-2);font-size:13.5px;margin-bottom:22px}
+code{font-family:var(--mono);font-size:12.8px;background:var(--soft);padding:1px 5px;border-radius:4px;color:#0f4d3c;white-space:nowrap}
+pre{font-family:var(--mono);font-size:12.4px;line-height:1.62;background:#0f1b18;color:#d6e4df;
+  padding:14px 16px;border-radius:8px;overflow-x:auto;margin:12px 0}
+pre .c{color:#7d9b91}
+pre .o{color:#9fe8bd}
+pre .e{color:#ff9b9b}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:14px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi .n{font-size:21px;font-weight:600;color:var(--brand);letter-spacing:-.5px}
+.kpi .l{font-size:12.3px;color:var(--ink-3);margin-top:2px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.3px;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--soft);font-weight:600;color:var(--ink-2);font-size:12.7px;white-space:nowrap}
+tbody tr:nth-child(even){background:#fbfcfd}
+.tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:20px;white-space:nowrap;font-weight:600}
+.t-ok{background:var(--green-soft);color:var(--green)}
+.t-bad{background:var(--red-soft);color:var(--red)}
+.t-warn{background:var(--amber-soft);color:var(--amber)}
+.t-n{background:var(--soft);color:var(--ink-2)}
+.t-info{background:var(--blue-soft);color:var(--blue)}
+ul,ol{margin:8px 0;padding-left:22px}
+li{margin:4px 0}
+.note{border-left:3px solid var(--brand);background:var(--brand-soft);padding:10px 14px;border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.warn{border-left:3px solid var(--amber);background:var(--amber-soft);padding:10px 14px;border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.danger{border-left:3px solid var(--red);background:var(--red-soft);padding:10px 14px;border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.ok{border-left:3px solid var(--green);background:var(--green-soft);padding:10px 14px;border-radius:0 8px 8px 0;font-size:13.4px;margin:12px 0}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:16px 0}
+.opt{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;position:relative}
+.opt.rec{border:2px solid var(--brand);box-shadow:0 2px 12px rgba(47,111,94,.1)}
+.opt .badge{position:absolute;top:-10px;right:12px;background:var(--brand);color:#fff;font-size:11px;padding:2px 9px;border-radius:20px;font-weight:600}
+.opt h4{margin:0 0 4px;font-size:15px;color:var(--ink)}
+.opt .meta{font-size:12px;color:var(--ink-3);margin-bottom:8px}
+.opt p{font-size:13.2px;margin:6px 0}
+.step{display:flex;gap:10px;padding:9px 0;border-bottom:1px dashed var(--line)}
+.step:last-child{border-bottom:0}
+.step .i{flex:0 0 24px;height:24px;border-radius:50%;background:var(--brand-soft);color:var(--brand);
+  font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.step .t{flex:1 1 auto;min-width:0;font-size:13.4px}
+.step .t em{font-style:normal;color:var(--ink-3);font-family:var(--mono);font-size:11.8px}
+footer{margin-top:48px;padding-top:14px;border-top:1px solid var(--line);color:var(--ink-3);font-size:12.2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>跨平台编译与开发流程可行性评估</h1>
+<div class="sub">对象：密码管理器（Go 版）· 环境：跳板机 Ubuntu 24.04（有网）/ 测试机 Ubuntu 24.04（无网）/ 本机 Windows 11 · 全部结论来自实测</div>
+
+<div class="grid">
+  <div class="kpi"><div class="n">4 / 4</div><div class="l">交叉编译目标架构全部成功</div></div>
+  <div class="kpi"><div class="n">1 项硬约束</div><div class="l">工具链版本必须 ≥ go.mod 声明</div></div>
+  <div class="kpi"><div class="n">41.8 MB</div><div class="l">vendor 离线搬运包（vs 缓存 1.4 GB）</div></div>
+  <div class="kpi"><div class="n">sha256 一致</div><div class="l">传输完整性全部校验通过</div></div>
+</div>
+
+<!-- ============ 结论先行 ============ -->
+<h2>一、结论先行</h2>
+
+<div class="ok">
+<strong>可行，且已跑通完整闭环。</strong>已在 Ubuntu 跳板机上交叉编译出 Windows 可执行文件，经 SFTP 传回本机 Windows 校验哈希一致并<strong>实际运行通过</strong>（注册 / 新增 / 解密 / 备份全链路正常，Argon2id 可用）。
+</div>
+
+<table>
+<thead><tr><th style="width:190px">维度</th><th style="width:110px">实测结论</th><th>依据</th></tr></thead>
+<tbody>
+<tr><td>Ubuntu → Windows 编译</td><td><span class="tag t-ok">可行</span></td>
+<td>纯 Go 项目 <code>CGO_ENABLED=0</code> 即可，无需任何 Windows 工具链；产物 <code>PE32+ executable (GUI) x86-64</code></td></tr>
+<tr><td>四架构矩阵</td><td><span class="tag t-ok">全部成功</span></td>
+<td>windows/amd64 9.27 MB、windows/arm64 8.65 MB、linux/amd64 9.05 MB、linux/arm64 8.63 MB</td></tr>
+<tr><td>运行时依赖</td><td><span class="tag t-ok">仅 kernel32.dll</span></td>
+<td><code>objdump -p</code> 显示只依赖 <code>kernel32.dll</code>，Windows 侧无需任何 VC++/Go 运行时</td></tr>
+<tr><td>无网机器编译</td><td><span class="tag t-ok">可行</span></td>
+<td>测试机（<code>goproxy.cn</code> 实测不可达）用内网 apt 的 Go 1.22 + vendor，<code>GOPROXY=off</code> 编译成功</td></tr>
+<tr><td>产物回传校验</td><td><span class="tag t-ok">全部一致</span></td>
+<td>sha256 远端与本地逐字节一致（离线产物 <code>4eba2814fd90…</code>）</td></tr>
+<tr><td>Rust 交叉编译</td><td><span class="tag t-warn">可行但需补 target</span></td>
+<td><code>rustup target add x86_64-pc-windows-gnu</code> 后可编译，1.22 MB，运行输出正常</td></tr>
+<tr><td>CGO（含 C 依赖）</td><td><span class="tag t-warn">需 mingw</span></td>
+<td>跳板机装 <code>gcc-mingw-w64-x86-64</code>（892 个库文件）后 <code>CGO_ENABLED=1</code> 可编；<strong>但本项目用纯 Go 驱动，不需要</strong></td></tr>
+</tbody>
+</table>
+
+<!-- ============ 环境对比 ============ -->
+<h2>二、三套环境的适用场景与前置条件</h2>
+
+<table>
+<thead><tr><th style="width:120px">环境</th><th style="width:150px">实测现状</th><th>适用场景</th><th style="width:230px">前置条件 / 限制</th></tr></thead>
+<tbody>
+<tr>
+<td><strong>跳板机</strong><br><code>example-jump-host</code></td>
+<td><span class="tag t-ok">推荐主力</span><br>Ubuntu 24.04.4<br>8 核 / 15 GB / 120 GB 空闲<br><span class="tag t-info">有公网</span></td>
+<td>
+<strong>开发 + 编译主环境。</strong><br>
+· 拉依赖（<code>goproxy.cn</code> 实测 200）<br>
+· <code>go mod tidy</code> / <code>vendor</code> 生成<br>
+· 四平台交叉编译<br>
+· 生成离线搬运包
+</td>
+<td>
+· Go 1.23.4 在 <code>/opt/go</code>（<code>dl.google.com</code> 可达，<code>golang.org</code> 不可达，须用前者）<br>
+· Rust 需 <code>RUSTUP_DIST_SERVER=mirrors.tuna.tsinghua.edu.cn/rustup</code> + crates 走 <code>rsproxy.cn</code><br>
+· CGO 需 <code>gcc-mingw-w64-x86-64</code>
+</td>
+</tr>
+<tr>
+<td><strong>测试机</strong><br><code>example-test-host</code></td>
+<td><span class="tag t-warn">可做编译但受限</span><br>Ubuntu 24.04.4<br>4 核 / 7 GB / 92 GB<br><span class="tag t-bad">无公网</span></td>
+<td>
+<strong>离线编译验证 / 内网产物构建。</strong><br>
+· 验证「拿到 vendor 包就能编」<br>
+· 隔离环境的最终构件产出<br>
+· 内网交付流水线
+</td>
+<td>
+· 初始<strong>无 Go</strong>，需内网 apt 安装（实测成功装到 1.22.2，源 <code>example-mirror.com</code> 返回 200）<br>
+· <strong>版本天花板</strong>：apt 只到 1.22，<code>go.mod</code> 写 1.23 会失败
+</td>
+</tr>
+<tr>
+<td><strong>本机 Windows</strong><br><code><local-ip></code></td>
+<td><span class="tag t-ok">验证环境</span><br>Windows 11<br>Go 需便携版<br><span class="tag t-info">有公网</span></td>
+<td>
+<strong>产物验证 + 打包 + 交付。</strong><br>
+· 运行跨平台产物、验功能<br>
+· 校验哈希、打 zip<br>
+· 最终用户验收
+</td>
+<td>
+· 本机无 Go / 无 gcc（实测 <code>go</code>、<code>gcc</code> 均空）<br>
+· 需下载 <code>go1.23.4.windows-amd64.zip</code>（<code>go.dev</code> 握手失败，须用 <code>dl.google.com</code>）<br>
+· 解压须用 Python zipfile：<code>unzip</code> 会因长路径/符号链接只解出 2,964/13,261 个文件
+</td>
+</tr>
+</tbody>
+</table>
+
+<div class="note">
+<strong>一句话分工：</strong>跳板机做「需要联网的重活」（拉依赖、生成 vendor、交叉编译）；测试机证明「断网也能编」（离线流水线可行性）；Windows 只做「跑起来看对不对」，不承担编译职责。
+</div>
+
+<!-- ============ 依赖获取与离线 ============ -->
+<h2>三、依赖获取与离线处理（实测数据）</h2>
+
+<h3>3.1 依赖来源现状</h3>
+<table>
+<thead><tr><th style="width:200px">目标</th><th style="width:190px">可用通道</th><th>不可用 / 注意</th></tr></thead>
+<tbody>
+<tr><td>Go 工具链</td><td><code>dl.google.com</code> ✓</td><td><code>go.dev</code> 报 <code>schannel handshake failed</code>；<code>golang.org</code> 直连失败</td></tr>
+<tr><td>Go 模块</td><td><code>goproxy.cn</code> ✓</td><td><code>proxy.golang.org</code> 实测失败</td></tr>
+<tr><td>Rust 工具链</td><td>tuna 镜像 ✓</td><td>tuna <strong>只代理 rustup 本体</strong>，不代理 crate</td></tr>
+<tr><td>Rust crate</td><td><code>rsproxy.cn</code> ✓</td><td><code>static.crates.io</code> 超时（30s 内 0 字节）</td></tr>
+<tr><td>系统包</td><td>阿里云 apt 源 ✓ / 内网 <code>example-mirror.com</code> ✓</td><td>测试机公网 apt 被 ACL 阻断</td></tr>
+<tr><td>WebView2 运行时</td><td>本机已装 150.0.4078.83 ✓</td><td>但运行时<strong>不含</strong> <code>WebView2Loader.dll</code>（见第五章坑 4）</td></tr>
+</tbody>
+</table>
+
+<h3>3.2 离线搬运方案：vendor vs 模块缓存</h3>
+<p>实测本项目依赖规模：</p>
+<table>
+<thead><tr><th style="width:200px">指标</th><th style="width:130px">实测值</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>直接依赖</td><td>2 个</td><td><code>golang.org/x/crypto</code>、<code>modernc.org/sqlite</code></td></tr>
+<tr><td>传递依赖（模块级）</td><td>10 个</td><td><code>go list -deps</code> 统计</td></tr>
+<tr><td><code>vendor/</code> 目录</td><td><strong>206 MB</strong> / 1,765 文件</td><td>含全部源码，可直接编译</td></tr>
+<tr><td><code>vendor</code> 压缩后</td><td><strong>41.8 MB</strong></td><td>这是实际搬运体积</td></tr>
+<tr><td>完整 <code>GOMODCACHE</code></td><td><strong>1.4 GB</strong></td><td>含校验文件、多版本，不适合搬运</td></tr>
+</tbody>
+</table>
+
+<div class="ok">
+<strong>推荐离线形态：<code>go mod vendor</code> + <code>-mod=vendor</code>。</strong>
+41.8 MB 即可搬运，而完整模块缓存 1.4 GB（<u>相差 34 倍</u>）。实测在 <code>GOPROXY=off</code> 下编译成功。
+</div>
+
+<h3>3.3 离线编译的两个必踩陷阱（实测）</h3>
+
+<div class="danger">
+<strong>陷阱 1｜工具链版本必须 ≥ <code>go.mod</code> 的 <code>go</code> 声明</strong><br><br>
+测试机 apt 装到 Go <strong>1.22.2</strong>，而 <code>go.mod</code> 写 <code>go 1.23</code>，断网编译报：
+<pre><span class="e">go: downloading go1.23 (linux/amd64)
+go: download go1.23 for linux/amd64: toolchain not available</span></pre>
+Go 1.21+ 的 <code>GOTOOLCHAIN=auto</code> 默认行为是<strong>自动下载更高版本工具链</strong>，断网即成死路。<br>
+即使加 <code>GOTOOLCHAIN=local</code> 也只是变成另一条错误：
+<pre><span class="e">go: go.mod requires go >= 1.23 (running go 1.22.2; GOTOOLCHAIN=local)</span></pre>
+<strong>解法：把 <code>go.mod</code> 的版本降到离线环境的工具链版本</strong>（实测降到 1.22 后通过）。
+</div>
+
+<div class="danger">
+<strong>陷阱 2｜改 <code>go.mod</code> 后必须重建 <code>vendor</code>，否则一致性校验直接拒绝</strong><br><br>
+手工把 <code>go 1.23</code> 改成 <code>go 1.22</code> 后编译报：
+<pre><span class="e">go: inconsistent vendoring in /tmp/alb:
+&nbsp;&nbsp;github.com/dustin/go-humanize@v1.0.1: is marked as explicit in vendor/modules.txt,
+&nbsp;&nbsp;but not explicitly required in go.mod   （共 6 条同类）</span></pre>
+根因：<code>vendor/modules.txt</code> 里有 <strong>11 个 <code>## explicit</code> 标记</strong>（含传递依赖），与 <code>go.mod</code> 的 <code>require</code> 块必须严格对应。<br>
+<strong>解法：改完 <code>go.mod</code> 后在联网机器上重新 <code>go mod tidy &amp;&amp; go mod vendor</code></strong>，三者（go.mod / go.sum / vendor）必须出自同一次生成。
+</div>
+
+<div class="warn">
+<strong>陷阱 3｜CRLF 会让 <code>sed</code> 修改 <code>go.mod</code> 静默失效</strong><br>
+从 Windows 编辑过的 <code>go.mod</code> 带 CRLF，<code>sed -i 's/^go 1.23$/go 1.22/'</code> 因行尾 <code>\r</code> 匹配不上而<u>什么都不改</u>，且不报错。实测改用 <code>perl -pe 's/^go 1\.\d+\s*$/go 1.22\n/'</code> 才生效。
+</div>
+
+<!-- ============ 兼容性 ============ -->
+<h2>四、跨平台编译的兼容性与注意事项</h2>
+
+<h3>4.1 Go 交叉编译的硬性边界</h3>
+<table>
+<thead><tr><th style="width:170px">场景</th><th style="width:130px">是否可行</th><th>说明与实测</th></tr></thead>
+<tbody>
+<tr><td>纯 Go 依赖</td><td><span class="tag t-ok">零配置</span></td>
+<td><code>CGO_ENABLED=0 GOOS=windows GOARCH=amd64</code> 一条命令即可，产出静态链接 PE，只依赖 <code>kernel32.dll</code></td></tr>
+<tr><td>含 CGO 依赖</td><td><span class="tag t-warn">需 mingw</span></td>
+<td>需 <code>CC=x86_64-w64-mingw32-gcc CGO_ENABLED=1</code>；实测装上 mingw 后成功（CGO 与纯 Go 产物哈希不同，证明确实走了 C 链路）</td></tr>
+<tr><td>Windows 专用 API</td><td><span class="tag t-bad">不可跨编译</span></td>
+<td>如 <code>syscall.NewLazyDLL</code>、<code>golang.org/x/sys/windows</code> —— <strong>只能在 GOOS=windows 时编译</strong>，Linux 上 <code>go build</code>（不带 GOOS）会编译失败。本项目已用 <code>//go:build windows</code> 分离 <code>platform_windows.go</code> / <code>platform_other.go</code></td></tr>
+<tr><td>SQLite</td><td><span class="tag t-ok">本项目免 CGO</span></td>
+<td>用 <code>modernc.org/sqlite</code>（C 转译成 Go），无需 C 工具链。<u>若换 <code>mattn/go-sqlite3</code> 则必须 CGO + mingw</u></td></tr>
+<tr><td>GUI（WebView2）</td><td><span class="tag t-bad">本项目遇阻</span></td>
+<td>详见第五章坑 4</td></tr>
+</tbody>
+</table>
+
+<h3>4.2 产物属性（实测）</h3>
+<pre><span class="c"># 文件类型</span>
+<span class="o">PE32+ executable (GUI) x86-64, for MS Windows, 8 sections</span>
+
+<span class="c"># 动态依赖（objdump -p | grep 'DLL Name'）</span>
+<span class="o">DLL Name: kernel32.dll</span>          <span class="c">← 仅此一项，其余全部静态链入</span></pre>
+<p>这意味着 Windows 侧<strong>不需要安装 Go、不需要 VC++ 运行库、不需要任何 .NET</strong>，拷贝单个 exe 即可运行 —— 与「离线机器可直接用」的交付要求吻合。</p>
+
+<h3>4.3 路径与编码类兼容问题（跨平台高频）</h3>
+<table>
+<thead><tr><th style="width:220px">问题</th><th>表现与处理</th></tr></thead>
+<tbody>
+<tr><td>Windows 路径分隔符</td><td>Go 的 <code>filepath</code> 自动适配；但<strong>传给 SQLite 的 DSN 必须用正斜杠</strong>（实测本机 <code>file:C:\...\x.db</code> 打不开，需 <code>filepath.ToSlash</code>）</td></tr>
+<tr><td>GNOME/命令行的中文编码</td><td>Linux 侧 UTF-8 → Windows cmd 默认 GBK(936)，Go 输出中文日志会乱码。需 <code>SetConsoleOutputCP(65001)</code>（本项目已实现 <code>console_windows.go</code>）</td></tr>
+<tr><td>bat 脚本编码</td><td>cmd 执行前按当前代码页解析脚本文件，UTF-8 中文会被拆成非法字节、行尾字节被当命令（实测报 <code>'的' is not recognized</code>）。<strong>脚本存 GBK + 开头 <code>chcp 65001</code> + 脚本内提示只用 ASCII</strong></td></tr>
+<tr><td>换行符</td><td>bat 必须 CRLF；shell 脚本必须 LF（CRLF 的 <code>.sh</code> 会报 <code>$'do\r'</code> 语法错）</td></tr>
+<tr><td>长路径解压</td><td>Windows 上 <code>unzip</code> 解 Go 官方 zip 只出 2,964/13,261 文件，用 Python <code>zipfile</code> 才完整</td></tr>
+</tbody>
+</table>
+
+<!-- ============ 传输与验证 ============ -->
+<h2>五、产物从 Ubuntu 到 Windows 的完整步骤</h2>
+
+<div class="card">
+<div class="step"><div class="i">1</div><div class="t"><strong>Ubuntu 侧准备工具链</strong>（一次性）<br>
+<em>Go：下载 go1.23.4.linux-amd64 解压到 /opt/go；PATH 加入 /opt/go/bin</em><br>
+验证：<code>go version</code> → <code>go1.23.4 linux/amd64</code></div></div>
+
+<div class="step"><div class="i">2</div><div class="t"><strong>对齐 go.mod 与离线工具链版本</strong>（若最终要在无网机器编译）<br>
+<em>perl -i -pe 's/^go 1\.\d+\s*$/go 1.22\n/' go.mod</em><br>
+⚠ 必须用 perl 而非 sed（CRLF 会让 sed 静默失效）</div></div>
+
+<div class="step"><div class="i">3</div><div class="t"><strong>拉依赖 + 生成 vendor</strong><br>
+<em>GOPROXY=https://goproxy.cn,direct go mod tidy &amp;&amp; go mod vendor</em><br>
+验收：<code>grep -c '## explicit' vendor/modules.txt</code> 有值；<code>find vendor -type f | wc -l</code> = 1,765</div></div>
+
+<div class="step"><div class="i">4</div><div class="t"><strong>交叉编译 Windows 产物</strong><br>
+<em>CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \<br>
+go build -trimpath -ldflags='-s -w -H windowsgui' -o vaultd.exe ./cmd/vaultd</em><br>
+验收：<code>file</code> 显示 <code>PE32+ executable (GUI) x86-64</code></div></div>
+
+<div class="step"><div class="i">5</div><div class="t"><strong>记录远端哈希</strong>（用于传输完整性校验）<br>
+<em>sha256sum vaultd.exe | cut -d' ' -f1</em></div></div>
+
+<div class="step"><div class="i">6</div><div class="t"><strong>传输到 Windows</strong>（SFTP，走 paramiko）<br>
+<em>sftp.get('/path/vaultd.exe', r'C:\...\vaultd.exe')</em><br>
+⚠ Linux→测试机→Windows 跨机中转时，测试机与跳板机<strong>互不相通</strong>，必须经本机中转</div></div>
+
+<div class="step"><div class="i">7</div><div class="t"><strong>Windows 侧校验哈希</strong><br>
+<em>sha256sum vaultd.exe</em> → 与第 5 步逐字节一致才算传输无损</div></div>
+
+<div class="step"><div class="i">8</div><div class="t"><strong>Windows 侧运行验证</strong><br>
+本机无杀毒拦阻时直接执行；建议先 <code>-addr 127.0.0.1:0 -open=false</code> 起服务，探测 <code>/api/status</code> 返回 200 与 <code>argon2_ready=true</code>，再人工点界面走一遍注册→新增→解密→备份</div></div>
+
+<div class="step"><div class="i">9</div><div class="t"><strong>打交付包</strong><br>
+exe + 启动脚本（GBK/CRLF）+ README + 空 <code>data/</code> → zip。验收：解压后双击启动，数据落在同级 <code>data/</code></div></div>
+</div>
+
+<h3>5.1 实测的完整验证结果</h3>
+<pre><span class="c"># 无网测试机构建（GOPROXY=off / GOTOOLCHAIN=local / -mod=vendor）</span>
+<span class="o">windows/amd64  9.27 MB    windows/arm64  8.65 MB
+linux/amd64    9.05 MB    linux/arm64    8.63 MB</span>
+
+<span class="c"># 传输校验</span>
+远端 = 4eba2814fd90611901f24be331cea27a277f4ee0edc8cba96daaff877c5d270e
+本地 = 4eba2814fd90611901f24be331cea27a277f4ee0edc8cba96daaff877c5d270e  <span class="o">一致 ✓</span>
+
+<span class="c"># Windows 本机运行</span>
+<span class="o">✓ 服务就绪 initialized=False argon2=True</span>
+<span class="o">注册: 200   新增: {id:1, ok:true}</span>
+<span class="o">解密: {ok:true, password:"Off!Secret9"}   备份: {ok:true, 76.00 KB}</span></pre>
+
+<!-- ============ 已知坑 ============ -->
+<h2>六、踩过的坑（都已在实测中撞到）</h2>
+
+<table>
+<thead><tr><th style="width:44px">#</th><th style="width:210px">问题</th><th>根因与处理</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>go.dev</code> 下载失败</td><td>TLS 握手失败（<code>schannel</code>）。改走 <code>dl.google.com</code>（实测 200）</td></tr>
+<tr><td>2</td><td>Go 解压不完整</td><td>Windows <code>unzip</code> 只解出 2,964 文件，<code>encoding/binary</code> 等 std 包缺失报 <code>not in std</code>。改用 Python <code>zipfile</code> 解出 13,261 文件</td></tr>
+<tr><td>3</td><td><code>go mod tidy</code> 报 <code>not in std</code></td><td>同上，源于解压不完整。完整解压后即消失</td></tr>
+<tr><td>4</td><td><strong>WebView2 Go 绑定全部失效</strong></td><td>
+<code>github.com/jchv/go-webview2</code> 依赖内嵌的旧版 <code>WebView2Loader.dll</code>；本机运行时已升到 <strong>150.0.4078</strong> 且<u>不再随附 loader</u>。表现为：窗口能创建（<code>class='webview'</code>），但 <code>Eval</code> 无任何效果、<code>window.external</code> 不存在、页面停在空白。<br>
+<strong>结论：不要再在 150.x 上押这个库</strong>；需要真 GUI 应走 Wails（自带版本适配）或「Edge <code>--app</code> 模式」。</td></tr>
+<tr><td>5</td><td>跨机 SSH 不通</td><td>跳板机 ↔ 测试机互不相通，任何跨机搬运必须经本机中转</td></tr>
+<tr><td>6</td><td>后台进程被回收</td><td>bash <code>&amp;</code> 起的进程随工具会话结束被干掉。验收脚本必须「启动+测试+关闭」放在同一次调用内</td></tr>
+</tbody>
+</table>
+
+<!-- ============ 推荐 ============ -->
+<h2>七、推荐环境选择与潜在限制</h2>
+
+<div class="opts">
+  <div class="opt rec">
+    <div class="badge">推荐</div>
+    <h4>方案 A：跳板机编译 + Windows 验证</h4>
+    <div class="meta">最省事 · 已完整跑通 · 适合日常迭代</div>
+    <p><strong>流程</strong>：跳板机拉依赖 → 交叉编译 → SFTP 回 Windows → 哈希校验 → 运行验证。</p>
+    <p><strong>为什么</strong>：跳板机有公网、8 核、120 GB 空闲，Go/Rust/mingw 齐全；Windows 只承担验证，不装编译环境。</p>
+    <p><strong>前置</strong>：Go 在 <code>/opt/go</code>；<code>dl.google.com</code> + <code>goproxy.cn</code> 可达。</p>
+    <p><strong>限制</strong>：跳板机是共享生产机，<u>编译目录要放 <code>/tmp</code> 或 <code>/opt/lab</code>，不要碰业务目录</u>；GOCACHE 会占几百 MB。</p>
+  </div>
+
+  <div class="opt">
+    <h4>方案 B：跳板机预热 + 测试机离线编译</h4>
+    <div class="meta">适合内网/隔离交付 · 已验证可行</div>
+    <p><strong>流程</strong>：跳板机 <code>go mod vendor</code> → 41.8 MB 包搬到测试机 → 测试机断网 <code>-mod=vendor GOPROXY=off</code> 编译 → 回 Windows 验证。</p>
+    <p><strong>为什么</strong>：证明断网流水线可行，适合合规要求「构建不出内网」的场景。</p>
+    <p><strong>前置</strong>：测试机需内网 apt 装 Go（实测 1.22.2）；<code>go.mod</code> 版本必须 ≤ 1.22。</p>
+    <p><strong>限制</strong>：<u>工具链版本被 apt 锁死在 1.22</u>，用不上新语法/新 std API；<code>go mod tidy</code> 无法在离线机执行（改依赖必须回联网机重做 vendor）。</p>
+  </div>
+
+  <div class="opt">
+    <h4>方案 C：本机 Windows 直接编译</h4>
+    <div class="meta">调试最快 · 但不建议作为唯一流程</div>
+    <p><strong>流程</strong>：本机装 Go 便携版 → 原生 <code>go build</code> → 直接运行。</p>
+    <p><strong>为什么</strong>：改一行动代码就能跑，调试周期最短；对 Windows 专用 API（WebView2、注册表、剪贴板）支持最完整。</p>
+    <p><strong>限制</strong>：本机目前无 Go；<u>跨平台产物仍需 Linux 侧产出</u>（如 linux/arm64 部署包），双轨会增加一致性维护成本。</p>
+  </div>
+</div>
+
+<div class="ok">
+<strong>建议的组合：A 为主 + C 为辅。</strong><br>
+· <strong>日常迭代</strong>用 C（本机快）或 A（跳板机），改动小、反馈快<br>
+· <strong>出交付产物</strong>统一走 A，保证产物可复现、可校验<br>
+· <strong>需要隔离构建</strong>（合规/无网）才上 B，并接受 1.22 版本天花板
+</div>
+
+<h3>7.1 潜在限制清单</h3>
+<table>
+<thead><tr><th style="width:200px">限制</th><th style="width:90px">影响</th><th>缓解</th></tr></thead>
+<tbody>
+<tr><td>测试机 Go 版本锁 1.22</td><td><span class="tag t-warn">中</span></td><td>保持 <code>go.mod</code> ≤ 1.22；或把 Go 官方 tar.gz 也纳入离线搬运包（约 70 MB）</td></tr>
+<tr><td>离线机无法 <code>go mod tidy</code></td><td><span class="tag t-warn">中</span></td><td>依赖变更一律回联网机重做 vendor；把 vendor 纳入版本库</td></tr>
+<tr><td>WebView2 GUI 方案受阻</td><td><span class="tag t-bad">高</span></td><td>真 GUI 改走 Wails 或 Edge <code>--app</code>；当前交付的浏览器承载形态不受影响</td></tr>
+<tr><td>跳板机为共享生产机</td><td><span class="tag t-warn">中</span></td><td>编译在 <code>/opt/lab</code> 或 <code>/tmp</code>；<code>GOCACHE</code> 显式指定独立目录，定期清理</td></tr>
+<tr><td>无 ARM Windows 实机</td><td><span class="tag t-n">低</span></td><td>windows/arm64 能编译（8.65 MB）但<u>未在真机验证</u>，仅作能力证明</td></tr>
+<tr><td><code>-s -w</code> 剥离符号</td><td><span class="tag t-n">低</span></td><td>体积降约 30%，但崩溃栈无行号。保留一份未剥离版用于排障</td></tr>
+<tr><td>杀毒误报</td><td><span class="tag t-warn">中</span></td><td>未签名的 Go 静态 exe 常被误判；正式分发建议代码签名</td></tr>
+</tbody>
+</table>
+
+<h3>7.2 一句话总结</h3>
+<div class="card">
+<p><strong>编译放 Ubuntu，验证放 Windows，这条链路是通的，而且我已经完整跑过一遍</strong>——产物 9.27 MB、只依赖 <code>kernel32.dll</code>、四架构全部成功、传输哈希一致、Windows 上注册/加解密/备份全部正常。</p>
+<p>真正需要盯住的不是「能不能编」，而是三个<b>版本一致性问题</b>：<code>go.mod</code> 的 go 版本 vs 工具链、<code>go.mod</code> vs <code>vendor/modules.txt</code>、以及 CRLF 让脚本改动静默失效。这三处任一不一致都会报出看似无关的错误。</p>
+<p>另外必须记住一条否定结论：<strong>WebView2 的 Go 绑定在本机 150.x 运行时上不可用</strong>，如果你的目标是「真 GUI 窗口」，不要在这条路上继续投入。</p>
+</div>
+
+<footer>
+验证方式：所有结论均在真实环境实测 —— 跳板机 example-jump-host（Ubuntu 24.04.4, Go 1.23.4, mingw 13, Rust 1.99.1）、测试机 example-test-host（Ubuntu 24.04.4, Go 1.22.2, 无公网）、本机 Windows 11（Go 1.23.4 便携版）。产物经 SFTP 传输并做 sha256 逐字节比对，Windows 侧实际执行并跑通完整业务链路。<br>
+未验证项：windows/arm64 未在真机运行（仅交叉编译成功）；未做代码签名与杀毒环境测试；跳板机编译并发性能未压测。
+</footer>
+
+</div>
+</body>
+</html>

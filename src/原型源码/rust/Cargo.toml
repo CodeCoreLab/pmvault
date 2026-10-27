@@ -1,0 +1,17 @@
+[package]
+name = "vault_proto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aes-gcm = "0.10"
+argon2 = "0.5"
+base64 = "0.22"
+rand = "0.8"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha2 = "0.10"
+hmac = "0.12"
+
+[[bin]]
+name = "bench"
+path = "src/bench.rs"

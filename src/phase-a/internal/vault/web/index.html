@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>密码管理器</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<!-- 未初始化 / 登录 -->
+<div id="authView" class="auth-wrap" hidden>
+  <div class="auth-card">
+    <h1><span id="authTitle">登录</span></h1>
+    <p class="sub" id="authSub">请输入凭据以继续</p>
+
+    <form id="authForm">
+      <div class="field">
+        <label for="username">用户名</label>
+        <input id="username" name="username" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">登录密码</label>
+        <div class="pwd">
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button type="button" class="eye" data-target="password" aria-label="显示密码">👁</button>
+        </div>
+      </div>
+      <div class="field" id="masterField" hidden>
+        <label for="masterPassword">主密钥密码</label>
+        <div class="pwd">
+          <input id="masterPassword" name="masterPassword" type="password" autocomplete="new-password">
+          <button type="button" class="eye" data-target="masterPassword" aria-label="显示主密钥密码">👁</button>
+        </div>
+        <small class="hint">用于加密全部数据。与登录密码不同，丢失后无法恢复。</small>
+      </div>
+      <div id="authError" class="error" hidden></div>
+      <button type="submit" class="btn primary block" id="authSubmit">登录</button>
+    </form>
+  </div>
+</div>
+
+<!-- 主界面 -->
+<div id="mainView" class="app" hidden>
+  <header class="topbar">
+    <div class="brand">🔐 密码管理器</div>
+    <div class="top-actions">
+      <button id="btnBackup" class="btn ghost">备份</button>
+      <button id="btnLock" class="btn ghost">锁定</button>
+      <button id="btnLogout" class="btn ghost">退出登录</button>
+      <button id="btnShutdown" class="btn ghost" title="停止本地服务并关闭程序">退出程序</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <aside class="sidebar">
+      <div class="side-head">
+        <span>分类</span>
+        <button id="btnAddCategory" class="btn ghost small">+ 新建</button>
+      </div>
+      <ul id="categoryList" class="cat-list"></ul>
+      <div class="side-foot">
+        <a href="#" id="linkTrash">回收站</a>
+      </div>
+    </aside>
+
+    <main class="content">
+      <div class="content-head">
+        <div class="title-row">
+          <h2 id="listTitle">所有密码</h2>
+          <span id="listCount" class="badge">0</span>
+        </div>
+        <div class="tools">
+          <input id="search" class="search" placeholder="搜索标题 / 用户名 / 网址 / 备注">
+          <button id="btnAddEntry" class="btn primary">+ 添加密码</button>
+        </div>
+      </div>
+
+      <div id="lockBanner" class="banner" hidden>
+        <span>主密钥未解锁，查看密码前需要验证。</span>
+        <button id="btnUnlock" class="btn primary small">解锁</button>
+      </div>
+
+      <table class="grid">
+        <thead>
+          <tr>
+            <th class="col-idx">#</th>
+            <th>标题</th>
+            <th>网址 / 应用</th>
+            <th>用户名</th>
+            <th class="col-pwd">密码</th>
+            <th class="col-time">更新时间</th>
+            <th class="col-act">操作</th>
+          </tr>
+        </thead>
+        <tbody id="entryRows"></tbody>
+      </table>
+      <div id="emptyState" class="empty" hidden>暂无记录</div>
+
+      <div class="pager">
+        <button id="prevPage" class="btn ghost small">上一页</button>
+        <span id="pageInfo">1 / 1</span>
+        <button id="nextPage" class="btn ghost small">下一页</button>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- 解锁对话框 -->
+<dialog id="unlockDialog">
+  <form id="unlockForm" method="dialog">
+    <h3>解锁</h3>
+    <p class="sub">输入主密钥密码以查看和修改密码</p>
+    <div class="field">
+      <label for="unlockPassword">主密钥密码</label>
+      <div class="pwd">
+        <input id="unlockPassword" type="password" required>
+        <button type="button" class="eye" data-target="unlockPassword" aria-label="显示密码">👁</button>
+      </div>
+    </div>
+    <div id="unlockError" class="error" hidden></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="unlockCancel">取消</button>
+      <button type="submit" class="btn primary">解锁</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 添加/编辑密码 -->
+<dialog id="entryDialog">
+  <form id="entryForm">
+    <h3 id="entryDialogTitle">添加密码</h3>
+    <div class="two-col">
+      <div class="field">
+        <label for="eTitle">标题 *</label>
+        <input id="eTitle" required>
+      </div>
+      <div class="field">
+        <label for="eCategory">分类</label>
+        <select id="eCategory"></select>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="field">
+        <label for="eUrl">网址 / 应用名</label>
+        <input id="eUrl" placeholder="https://…">
+      </div>
+      <div class="field">
+        <label for="eUsername">用户名</label>
+        <input id="eUsername">
+      </div>
+    </div>
+    <div class="field">
+      <label for="ePassword">密码 <span id="pwdHint" class="hint-inline"></span></label>
+      <div class="pwd">
+        <input id="ePassword" type="password">
+        <button type="button" class="eye" data-target="ePassword" aria-label="显示密码">👁</button>
+        <button type="button" id="btnGen" class="btn ghost small">生成</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="eNotes">备注</label>
+      <textarea id="eNotes" rows="3"></textarea>
+    </div>
+    <div id="entryError" class="error" hidden></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="entryCancel">取消</button>
+      <button type="submit" class="btn primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 新建分类 -->
+<dialog id="catDialog">
+  <form id="catForm">
+    <h3>新建分类</h3>
+    <div class="field">
+      <label for="catName">名称 *</label>
+      <input id="catName" required>
+    </div>
+    <div class="field">
+      <label for="catIcon">图标</label>
+      <input id="catIcon" value="folder" placeholder="folder / laptop / key …">
+    </div>
+    <div id="catError" class="error" hidden></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="catCancel">取消</button>
+      <button type="submit" class="btn primary">创建</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
