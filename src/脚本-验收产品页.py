@@ -18,9 +18,12 @@ OUT = os.path.join(os.environ["TEMP"], "pp_shot")
 os.makedirs(OUT, exist_ok=True)
 
 fails = []
+total = 0
 
 
 def chk(label, cond, detail=""):
+    global total
+    total += 1
     print(("  [OK]  " if cond else "  [FAIL]") + " " + label
           + (f"   {detail}" if detail else ""))
     if not cond:
@@ -178,6 +181,7 @@ with sync_playwright() as pw:
     browser.close()
 
 print("\n" + "=" * 58)
+print(f"  检查项共 {total} 项，失败 {len(fails)} 项")
 if fails:
     print(f"  失败 {len(fails)} 项:")
     for f in fails:

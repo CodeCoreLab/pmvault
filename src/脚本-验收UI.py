@@ -41,9 +41,12 @@ ENTRY_PW = "Bank!Secret99"
 
 fails = []
 shots = []
+total = 0
 
 
 def chk(label, cond, detail=""):
+    global total
+    total += 1
     mark = "[OK]  " if cond else "[FAIL]"
     print(f"  {mark} {label}" + (f"   {detail}" if detail else ""))
     if not cond:
@@ -282,6 +285,7 @@ def main():
 
     kill()
     print("\n" + "=" * 58)
+    print(f"  检查项共 {total} 项，失败 {len(fails)} 项")
     if fails:
         print(f"  失败 {len(fails)} 项:")
         for f in fails:

@@ -13,25 +13,29 @@ Windows 本地单机密码保险箱。AES-256-GCM 认证加密 + Argon2id 密钥
 ## 目录
 
 ```
-src\                          源码与验收脚本
-  ├── phase-a\                浏览器版（Go，Subsystem=2）
-  ├── phase-edgeapp\          桌面版（Go，-H windowsgui，Edge/Chrome 承载）
-  ├── 原型源码\               早期 Go / Rust 原型
-  ├── 跨平台编译\             跨平台构建实验
-  └── 脚本-\*.py              图标生成、双包验收、UI 端到端验收
-releases\                     发布的 zip 包
-docs\                         产品页 + 3 份设计与评估报告
+pmvault/
+├── src/                          源码与验收脚本
+│   ├── phase-a/                  浏览器版（Go，Subsystem=2）
+│   ├── phase-edgeapp/            桌面版（Go，-H windowsgui，Edge/Chrome 承载）
+│   ├── 原型源码/                 早期 Go / Rust 原型
+│   ├── 跨平台编译/               跨平台构建实验
+│   ├── 脚本/                     辅助脚本目录
+│   └── 脚本-*.py                 图标生成、双包验收、UI 端到端验收、macOS 打包
+├── releases/                     发布的 zip 包
+└── docs/                         产品页 + 设计与评估报告
 ```
 
 ## 制品
 
 | 文件 | 大小 | 说明 |
 |---|---|---|
-| `releases\密码管理器-原生窗口版-Windows.zip` | 4.14 MB | 独立窗口，推荐日常使用 |
-| `releases\密码管理器-桌面版-Windows.zip` | 4.15 MB | 浏览器承载界面 |
+| `releases/密码管理器-原生窗口版-Windows.zip` | 4.14 MB | 独立窗口，推荐日常使用 |
+| `releases/密码管理器-桌面版-Windows.zip` | 4.15 MB | 浏览器承载界面 |
 
 > 制品文件名沿用历史命名（"原生窗口版" 实为 Edge/Chrome `--app` 模式承载，
 > 并非原生 Win32 控件渲染）。后续重新打包时建议统一为「桌面版」。
+>
+> macOS 侧由 `src/脚本-打包-macOS.py` 产出 `.app` bundle，不走 Windows 打包脚本。
 
 两包均**无 bat 启动脚本**，双击 exe 直接启动（PE Subsystem=2，无控制台），
 且 exe 已链入程序图标（7 种尺寸）。
@@ -67,21 +71,28 @@ docs\                         产品页 + 3 份设计与评估报告
 
 ```bash
 # 生成图标资源（.ico + .syso，两版共用）
-python src\脚本-生成图标.py "E:\xmtool\pmvault\src\phase-edgeapp\cmd\vaultgui"
+# 路径参数可省略，脚本默认输出到 phase-edgeapp/cmd/vaultgui
+python src/脚本-生成图标.py
 
 # 打包（各自目录内有 脚本-打包.py）
-cd src\phase-edgeapp && python 脚本-打包.py
-cd src\phase-a      && python 脚本-打包.py
+cd src/phase-edgeapp && python 脚本-打包.py
+cd src/phase-a      && python 脚本-打包.py
+
+# macOS 打包（产出 .app bundle，需在 macOS 上执行）
+cd src && python 脚本-打包-macOS.py
 ```
 
 依赖 Go 1.23+ 工具链。若 `go` 不在 PATH 中，请把 Go 安装目录的 `bin`
 加入 PATH（例如 `C:\Program Files\Go\bin`），或在 `脚本-打包.py` 中
 通过 `GO` 环境变量指定 `go.exe` 的完整路径。
 
+> 所有脚本的路径均**基于脚本自身位置解析**，不含硬编码绝对路径——
+> 整个目录搬到任何位置都能直接跑。
+
 ### 依赖管理
 
 ```bash
-cd src\phase-a
+cd src/phase-a
 go mod tidy        # 同步 go.mod / go.sum
 go build ./...
 go vet ./...
@@ -94,22 +105,24 @@ go test ./...
 ## 验收
 
 ```bash
-# 双包纯 exe 验收（各 14 项）
-python src\脚本-验收双包.py
-# UI 端到端（21 项，含 CSP 与明遮蔽检查）
-python src\脚本-验收UI.py
-# 产品页视觉验收（20 项）
-python src\脚本-验收产品页.py
+# 双包纯 exe 验收：解压 → 双击即用 → 注册/增删/解密/CSRF/备份 → 落盘核对 → 退出
+python src/脚本-验收双包.py
+# UI 端到端：真实点击 UI，含 CSP 违规与密码明文遮蔽检查
+python src/脚本-验收UI.py
+# 产品页视觉验收：区块完整性、栅格列数、横向溢出、移动端布局
+python src/脚本-验收产品页.py
 ```
+
+三个脚本在结尾会打印**检查项总数与失败项清单**，退出码非 0 即失败，可直接接入 CI。
 
 ### 单元测试
 
 ```bash
-cd src\phase-a      && go test ./...
-cd src\phase-edgeapp && go test ./...
+cd src/phase-a       && go test ./...
+cd src/phase-edgeapp && go test ./...
 ```
 
-覆盖会话并发访问、闲置上锁、错误码脱敏、限流窗口、账户锁定时间解析、
+两个模块各 17 项，覆盖会话并发访问、闲置上锁、错误码脱敏、限流窗口、账户锁定时间解析、
 加解密往返等核心行为。如本机装有 gcc，可加 `-race` 参数做数据竞争检测：
 
 ```bash
@@ -123,8 +136,10 @@ pmvault/
 ├── src/
 │   ├── phase-a/                浏览器版（Go，Subsystem=2，控制台程序）
 │   ├── phase-edgeapp/          桌面版（Go，-H windowsgui，Edge/Chrome 承载）
-│   ├── 脚本-*.py               图标生成、双包验收、UI 端到端验收
-│   └── 跨平台编译/             跨平台构建实验
+│   ├── 原型源码/               早期 Go / Rust 原型
+│   ├── 跨平台编译/             跨平台构建实验
+│   ├── 脚本/                   辅助脚本目录
+│   └── 脚本-*.py               图标生成、双包验收、UI 端到端验收、macOS 打包
 ├── docs/                       产品页 + 设计与评估报告
 └── releases/                   发布的 zip 包
 ```

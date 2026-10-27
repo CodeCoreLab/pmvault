@@ -29,9 +29,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(_HERE)
 OP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 fails = []
+total = 0
 
 
 def chk(label, cond, detail=""):
+    global total
+    total += 1
     print(("  [OK]  " if cond else "  [FAIL]") + " " + label
           + (f"   {detail}" if detail else ""))
     if not cond:
@@ -203,6 +206,7 @@ def main():
            "vaultd.exe", "browser")
 
     print("\n" + "=" * 58)
+    print(f"  检查项共 {total} 项，失败 {len(fails)} 项")
     if fails:
         print(f"  失败 {len(fails)} 项:")
         for f in fails:
