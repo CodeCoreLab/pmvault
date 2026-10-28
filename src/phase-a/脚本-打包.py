@@ -12,6 +12,7 @@
 """
 import io
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -27,14 +28,38 @@ except ImportError:  # 本地编译路径不需要 paramiko
 # 路径一律基于本脚本位置解析，不写死任何机器的绝对路径。
 # 覆盖方式（可选）：设置环境变量 PMVAULT_OUT / PMVAULT_GO / PMVAULT_GOROOT / PMVAULT_GOPATH
 _HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.dirname(_HERE)                       # phase-a/ 目录
-OUT = os.environ.get("PMVAULT_OUT") or os.path.join(
-    os.path.dirname(os.path.dirname(_HERE)), "dist")
+SRC = _HERE                                         # phase-a/ 目录
+REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))  # 仓库根
+OUT = os.environ.get("PMVAULT_OUT") or os.path.join(REPO_ROOT, "dist")
+
+# 版本号唯一权威源 = 仓库根的 VERSION 文件（一行一个版本号）。
+# Go 源码里的 vault.Version 只是占位默认值（"dev"），
+# 真实版本在编译时经 ldflags -X 注入 —— 两个 module 共用同一个来源，不会漂移。
+VERSION_FILE = os.path.join(REPO_ROOT, "VERSION")
+# ldflags 注入目标 = 本 module 内 vault 包的完整导入路径
+LD_VERSION_TARGET = "vaultd/internal/vault.Version"
 
 # Go 工具链：优先用 PATH 上的 go，其次用环境变量指定的便携版
 GO = os.environ.get("PMVAULT_GO") or "go"
 GOROOT = os.environ.get("PMVAULT_GOROOT") or ""
 GOPATH = os.environ.get("PMVAULT_GOPATH") or ""
+
+
+def read_version():
+    """读仓库根的 VERSION 文件，返回版本号。
+
+    版本号格式必须是 MAJOR.MINOR.PATCH —— 与 CHANGELOG / GitHub tag 对齐。
+    读不到或格式不对时直接报错，绝不静默回退到某个硬编码版本：
+    静默回退会让产物版本与 CHANGELOG 脱钩，正是本机制要防的问题。
+    """
+    if not os.path.exists(VERSION_FILE):
+        raise SystemExit("缺少版本源文件: %s" % VERSION_FILE)
+    with open(VERSION_FILE, encoding="utf-8") as f:
+        ver = f.read().strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", ver):
+        raise SystemExit(
+            "版本源文件格式非法（应为 MAJOR.MINOR.PATCH）: %s 内容=%r" % (VERSION_FILE, ver))
+    return ver
 
 
 def build_local(out_exe):
@@ -43,6 +68,7 @@ def build_local(out_exe):
     比跳板机方案少一次 86KB 源码上传 + 一次 10MB 产物下载，
     也不受网络与远端环境波动影响。实测增量构建约 10s。
     """
+    ver = read_version()
     env = dict(os.environ)
     env.update({
         "GOPROXY": "off",
@@ -53,9 +79,10 @@ def build_local(out_exe):
     if GOPATH:
         env["GOPATH"] = GOPATH
     cmd = [GO, "build", "-trimpath",
-           "-ldflags=-s -w -H windowsgui -X main.buildInfo=desktop-1.0.0",
+           "-ldflags=-s -w -H windowsgui -X %s=%s" % (LD_VERSION_TARGET, ver),
            "-o", out_exe, "./cmd/vaultd"]
     print("[本地编译]", " ".join(cmd[:3]), "...")
+    print("  注入版本:", ver)
     r = subprocess.run(cmd, cwd=SRC, env=env, capture_output=True)
     if r.returncode != 0:
         print("  编译失败:")

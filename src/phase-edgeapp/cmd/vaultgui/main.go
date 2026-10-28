@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -37,6 +38,16 @@ import (
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "打印版本号后退出")
+	flag.Parse()
+
+	// --version 必须在此处返回：先于单实例互斥与建库，
+	// 否则查询版本号会顺带占用互斥量并创建数据目录。
+	if *showVersion {
+		fmt.Println("vaultgui " + vault.Version)
+		return
+	}
+
 	log.SetFlags(log.Ltime)
 	log.SetPrefix("[vaultgui] ")
 	initConsole()
@@ -76,6 +87,7 @@ func main() {
 	}
 
 	log.Printf("数据目录: %s", root)
+	log.Printf("版本: %s", vault.Version)
 
 	store, err := vault.OpenStore(filepath.Join(root, "passwords.db"), filepath.Join(root, "backups"))
 	if err != nil {

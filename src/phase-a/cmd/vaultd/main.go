@@ -32,7 +32,15 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "监听地址（默认 127.0.0.1 随机端口）")
 	dataDir := flag.String("data", "", "数据目录（默认：可执行文件同级的 data/）")
 	openBrowser := flag.Bool("open", true, "启动后自动打开浏览器")
+	showVersion := flag.Bool("version", false, "打印版本号后退出")
 	flag.Parse()
+
+	// --version 必须在此处返回：先于 initConsole / 建库 / 起服务，
+	// 否则查询版本号会顺带创建 data 目录并打开浏览器。
+	if *showVersion {
+		fmt.Println("vaultd " + vault.Version)
+		return
+	}
 
 	// Windows 控制台默认代码页是 GBK(936)，而 Go 输出的是 UTF-8 字节，
 	// 直接打印会变成乱码（用户无法看懂日志与错误信息）。
@@ -41,6 +49,7 @@ func main() {
 
 	log.SetFlags(log.Ltime)
 	log.SetPrefix("[vaultd] ")
+	log.Printf("版本: %s", vault.Version)
 
 	// 解析数据目录
 	root, err := resolveRoot(*dataDir)

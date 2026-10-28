@@ -29,17 +29,31 @@
 两包若同名，同时解压到同一父目录会互相覆盖 README / 使用说明。
 """
 import os
+import re
 import struct
+import subprocess
 import sys
 import zipfile
 
 # 以脚本自身位置推导工程根与产物目录，避免硬编码绝对路径在迁移后失效
 _HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = _HERE
+REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))  # 仓库根
 OUT = os.path.dirname(os.path.dirname(_HERE))
 # 构建产物就地放在项目内，不依赖 %TEMP%（临时目录会被系统清理，脚本会突然找不到 exe）
 EXE = os.path.join(SRC, "dist-windows", "vaultgui.exe")
 ICO = os.path.join(SRC, "cmd", "vaultgui", "app.ico")
+
+# 版本号唯一权威源 = 仓库根的 VERSION 文件（一行一个版本号）。
+# 与 phase-a 共用同一来源：ldflags -X 把版本注入本 module 的 vault 包，
+# 两份产物（vaultd.exe / vaultgui.exe）因此永远同版本。
+VERSION_FILE = os.path.join(REPO_ROOT, "VERSION")
+LD_VERSION_TARGET = "vaultgui/internal/vault.Version"
+
+# Go 工具链：优先用 PATH 上的 go，其次用环境变量指定的便携版
+GO = os.environ.get("PMVAULT_GO") or "go"
+GOROOT = os.environ.get("PMVAULT_GOROOT") or ""
+GOPATH = os.environ.get("PMVAULT_GOPATH") or ""
 
 PKG_ROOT = "密码管理器-原生窗口版"
 ZIP_PATH = os.path.join(OUT, f"{PKG_ROOT}-Windows.zip")
@@ -215,10 +229,59 @@ def verify_icon_embedded(exe_path, ico_path):
     }
 
 
+def read_version():
+    """读仓库根的 VERSION 文件，返回版本号。
+
+    版本号格式必须是 MAJOR.MINOR.PATCH —— 与 CHANGELOG / GitHub tag 对齐。
+    读不到或格式不对时直接报错，绝不静默回退到某个硬编码版本。
+    """
+    if not os.path.exists(VERSION_FILE):
+        raise SystemExit("缺少版本源文件: %s" % VERSION_FILE)
+    with open(VERSION_FILE, encoding="utf-8") as f:
+        ver = f.read().strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", ver):
+        raise SystemExit(
+            "版本源文件格式非法（应为 MAJOR.MINOR.PATCH）: %s 内容=%r" % (VERSION_FILE, ver))
+    return ver
+
+
+def build_exe():
+    """编译 Windows GUI 产物（vaultgui.exe）。
+
+    此前本脚本只负责打包、要求 exe 已预先构建，导致版本号无处注入 ——
+    现在构建与版本注入收敛到一处，与 phase-a 的做法保持一致。
+    """
+    ver = read_version()
+    env = dict(os.environ)
+    env.update({
+        "GOPROXY": "off",
+        "CGO_ENABLED": "0", "GOOS": "windows", "GOARCH": "amd64",
+    })
+    if GOROOT:
+        env["GOROOT"] = GOROOT
+    if GOPATH:
+        env["GOPATH"] = GOPATH
+    os.makedirs(os.path.dirname(EXE), exist_ok=True)
+    cmd = [GO, "build", "-trimpath",
+           "-ldflags=-s -w -H windowsgui -X %s=%s" % (LD_VERSION_TARGET, ver),
+           "-o", EXE, "./cmd/vaultgui"]
+    print("  编译:", " ".join(cmd[:3]), "...")
+    print("  注入版本:", ver)
+    r = subprocess.run(cmd, cwd=SRC, env=env, capture_output=True)
+    if r.returncode != 0:
+        print("  编译失败:")
+        print("  " + r.stderr.decode("utf-8", "replace")[:800])
+        raise SystemExit(1)
+    print("  编译通过")
+
+
 def main() -> int:
     print("=" * 58)
     print("  构建原生窗口版交付包（纯 exe）")
     print("=" * 58)
+
+    print("\n[0] 编译")
+    build_exe()
 
     if not os.path.exists(EXE):
         print("缺少 exe:", EXE)
