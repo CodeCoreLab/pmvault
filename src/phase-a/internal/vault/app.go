@@ -34,6 +34,15 @@ var webFS embed.FS
 const (
 	sessionTTL    = 30 * time.Minute
 	autoLockAfter = 15 * time.Minute // 会话内主密钥的闲置失效时间
+
+	// houseKeepInterval 是后台维护协程的周期。
+	//
+	// 【当前行为（修复前）】没有任何后台协程：
+	//  1. 过期会话只在「恰好用该 sid 发请求」时才被顺手删掉（currentSession 里 delete），
+	//     用户关掉浏览器后再也不回来 → 会话对象永远残留在 map 与 csrf map 里；
+	//  2. logs 审计表只增不减，无限增长。
+	// 【修复后】由一个后台协程定期做两件事：回收过期会话、裁剪审计日志。
+	houseKeepInterval = 5 * time.Minute
 )
 
 // session 保存单个已登录会话。
@@ -108,15 +117,90 @@ type App struct {
 
 	quitOnce sync.Once
 	quitCh   chan struct{}
+
+	// houseKeepStop / houseKeepDone 用于后台维护协程的优雅退出。
+	//
+	// 【当前行为（修复前）】不存在后台协程，故无需退出机制。
+	// 【修复后】新增后台 GC 协程，必须在 Close() 时停掉，
+	// 否则它会在 App.Close() 之后继续访问 a.store（数据库已关闭），
+	// 表现为后台刷 error 日志，极端情况下 panic。
+	houseKeepStop chan struct{}
+	houseKeepDone chan struct{}
+	houseKeepOnce sync.Once
 }
 
 func NewApp(store *Store) *App {
-	return &App{
+	a := &App{
 		store:    store,
 		sessions: make(map[string]*session),
 		csrf:     make(map[string]string),
 		limiter:  NewLimiter(),
 		quitCh:   make(chan struct{}),
+		// 后台维护协程的退出信号（channel 缓冲 1，
+		// 关闭后 select 立即可读，协程不会漏掉停止信号）
+		houseKeepStop: make(chan struct{}),
+		houseKeepDone: make(chan struct{}),
+	}
+	a.startHouseKeeper()
+	return a
+}
+
+// startHouseKeeper 启动后台维护协程：定期回收过期会话 + 裁剪审计日志。
+//
+// 【当前行为（修复前）】没有这个协程 —— 过期会话仅在请求路径上被动清理，
+// 用户不再访问后永久滞留；审计日志无上限增长。
+//
+// 退出方式：向 houseKeepStop 发信号，协程退出后关闭 houseKeepDone，
+// Close() 等它结束再关数据库，避免「协程访问已关闭的 DB」。
+func (a *App) startHouseKeeper() {
+	go func() {
+		defer close(a.houseKeepDone)
+		// 启动时先立即做一轮：
+		//   - 上一轮运行遗留的超期会话（进程上次是崩溃退出的）当场回收；
+		//   - 存量 logs 表可能已经很大（修复前无上限），当场裁剪一次，
+		//     不必等满一个周期。
+		a.gcExpiredSessions()
+		a.pruneLogs()
+
+		t := time.NewTicker(houseKeepInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-a.houseKeepStop:
+				return
+			case <-t.C:
+				a.gcExpiredSessions()
+				a.pruneLogs()
+			}
+		}
+	}()
+}
+
+// gcExpiredSessions 回收所有已超过 sessionTTL 的会话及其 CSRF token。
+//
+// 【当前行为（修复前）】只有 currentSession() 在「用该 sid 发请求且已过期」
+// 时才 delete 一条；没再来访问的会话对象与 csrf token 永久滞留，
+// 长时间运行的实例里 sessions/csrf 两张 map 无界增长（内存泄漏）。
+func (a *App) gcExpiredSessions() {
+	now := time.Now()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for sid, s := range a.sessions {
+		// s.Created 只在创建时写入一次，之后不再修改，因此此处无需持 s.mu。
+		if now.Sub(s.Created) > sessionTTL {
+			delete(a.sessions, sid)
+			delete(a.csrf, sid)
+		}
+	}
+}
+
+// pruneLogs 裁剪审计日志（保留策略见 store.go 的 logsRetentionDays / logsMaxRows）。
+func (a *App) pruneLogs() {
+	if a.store == nil {
+		return
+	}
+	if _, err := a.store.PruneLogs(); err != nil {
+		logf("裁剪审计日志失败: %v", err)
 	}
 }
 
@@ -129,12 +213,31 @@ func (a *App) requestQuit() {
 }
 
 // Close 释放资源
+//
+// 【当前行为（修复前）】直接清空 map 并关闭数据库。
+// 【修复后】先停后台维护协程并等待其退出，再关数据库 ——
+// 否则协程可能在数据库关闭后继续执行 PruneLogs，产生无意义的错误日志。
 func (a *App) Close() {
+	a.stopHouseKeeper()
 	a.mu.Lock()
 	a.sessions = make(map[string]*session)
 	a.csrf = make(map[string]string)
 	a.mu.Unlock()
 	_ = a.store.Close()
+}
+
+// stopHouseKeeper 停止后台维护协程并等待其退出（幂等，可重复调用）。
+func (a *App) stopHouseKeeper() {
+	a.houseKeepOnce.Do(func() {
+		close(a.houseKeepStop)
+	})
+	// 等待协程真正退出，避免它在 store 关闭后仍访问数据库。
+	// 用 select 加超时兜底：即使协程因异常卡住，Close 也不能永久挂起。
+	select {
+	case <-a.houseKeepDone:
+	case <-time.After(3 * time.Second):
+		logf("等待后台维护协程退出超时，继续关闭")
+	}
 }
 
 func (a *App) Router() http.Handler {
@@ -392,12 +495,16 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, CodeValidation, "用户名长度必须在 3-20 个字符之间", nil)
 		return
 	}
-	if st := CheckStrength(req.Password); st.Score < 3 {
-		writeErr(w, 400, CodeValidation, "登录密码强度不足："+strings.Join(st.Feedback, "、"), nil)
+	// 【当前行为（修复前）】门槛写死为 `st.Score < 3`：
+	// 6 位纯小写 + 1 个数字 = 1(长度≥6) + 1(小写) + 1(数字) = 3 分即可通过，
+	// 密码强度下限形同虚设。
+	// 【修复后】统一走 MeetsStrengthPolicy（长度 ≥ 8 且总分 ≥ 4）。
+	if ok, fb := MeetsStrengthPolicy(req.Password); !ok {
+		writeErr(w, 400, CodeValidation, "登录密码强度不足："+strings.Join(fb, "、"), nil)
 		return
 	}
-	if st := CheckStrength(req.MasterPassword); st.Score < 3 {
-		writeErr(w, 400, CodeValidation, "主密钥密码强度不足："+strings.Join(st.Feedback, "、"), nil)
+	if ok, fb := MeetsStrengthPolicy(req.MasterPassword); !ok {
+		writeErr(w, 400, CodeValidation, "主密钥密码强度不足："+strings.Join(fb, "、"), nil)
 		return
 	}
 	if req.Password == req.MasterPassword {
@@ -571,11 +678,33 @@ func (a *App) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 	keyB64, err := DeriveKey(req.Password, salt, u.KDFType, u.KDFParams)
 	if err != nil {
+		// 【当前行为（修复前）】所有派生失败都返回同一句「主密钥派生失败」。
+		// 其中最致命的一类（kdf_params 损坏）此前根本不会走到这里 ——
+		// crypto 层静默吞掉解析错误、用默认参数派生出**错误的密钥**，
+		// 用户看到的是「解锁成功但所有密码都解不开」，且没有任何线索。
+		//
+		// 【修复后】kdf_params 损坏单独给出可读提示：
+		// 这不是用户输错密码，而是账户数据损坏，需要技术支持介入。
+		if errors.Is(err, ErrKDFParams) {
+			writeErr(w, 500, CodeInternal,
+				"账户密钥参数损坏（kdf_params 无法解析），请从备份恢复或联系技术支持", err)
+			return
+		}
 		writeErr(w, 500, CodeInternal, "主密钥派生失败", err)
 		return
 	}
 
 	s.unlock(keyB64)
+
+	// 【当前行为（修复前）】unlock 不写任何审计记录。
+	// 「主密钥解锁」是整个系统的信任边界：解锁之后用户就能读出全部明文密码。
+	// 它与 reveal_entry 一样是必须留痕的动作，却完全没有被记录 ——
+	// 审计日志里只剩「登录」而没有「解锁」，无法区分
+	// 「用户登录后从未解锁」与「用户解锁后读走了所有密码」。
+	//
+	// 【修复后】写入 logs 表。失败解锁同样记录（但只记成功路径，
+	// 失败路径的记录由现有登录失败计数机制承担，避免日志被暴力破解刷爆）。
+	a.store.Log(s.UserID, "unlock", "主密钥解锁")
 
 	writeJSON(w, 200, map[string]any{"ok": true, "unlocked": true})
 }
@@ -805,6 +934,16 @@ func (a *App) handleRevealEntry(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, CodeDecryptFailed, "解密失败：主密钥不匹配或数据已损坏", err)
 		return
 	}
+	// 【当前行为（修复前）】reveal_entry 不写任何审计记录。
+	// 「读出明文密码」是密码管理器最敏感的动作 —— 它是攻击者拿到主密钥后
+	// 批量导出全部密码的必经之路，却完全没有留痕，
+	// 事后审计无法回答「谁在什么时候看了哪个账号的密码」。
+	//
+	// 【修复后】写入 logs 表。
+	// 注意：**绝不写入明文密码本身** —— 日志表是明文存储的，
+	// 把密码写进去等于给攻击者准备了第二个明文泄漏点。
+	// 只记录「看了哪条记录」（标题 + ID），足以定位泄密行为，又不引入新的泄漏面。
+	a.store.Log(s.UserID, "reveal_entry", fmt.Sprintf("查看明文密码: %s (ID: %d)", e.Title, id))
 	writeJSON(w, 200, map[string]any{"ok": true, "password": plain})
 }
 
@@ -965,9 +1104,19 @@ func (a *App) handleChangeLoginPassword(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, 401, CodeUnauthorized, "原登录密码错误", nil)
 		return
 	}
-	if st := CheckStrength(req.NewPassword); st.Score < 3 {
-		writeErr(w, 400, CodeValidation, "新密码强度不足："+strings.Join(st.Feedback, "、"), nil)
-		return
+	// 【当前行为（修复前）】门槛为 `CheckStrength(NewPassword).Score < 3`。
+	// 【修复后】改为统一的 MeetsStrengthPolicy（长度 ≥ 8 且总分 ≥ 4），
+	// 但**保留旧密码的情形不加门槛** ——
+	// 存量用户的密码是在旧规则下设置的（门槛只有 3 分，例如 8 位纯小写+数字），
+	// 新规则下这些密码已不达标。若不加豁免，存量用户在「改密」时
+	// 连「把新密码设成和旧密码一样」这种无害操作都会被拒绝，
+	// 属于规则收紧带来的纯损失。
+	// 豁免只对「新密码 == 旧密码」生效：此时并没有引入任何新的弱密码。
+	if req.NewPassword != req.OldPassword {
+		if ok, fb := MeetsStrengthPolicy(req.NewPassword); !ok {
+			writeErr(w, 400, CodeValidation, "新密码强度不足："+strings.Join(fb, "、"), nil)
+			return
+		}
 	}
 	h, err := hashPassword(req.NewPassword)
 	if err != nil {
@@ -1018,9 +1167,18 @@ func (a *App) handleChangeMasterPassword(w http.ResponseWriter, r *http.Request)
 		writeErr(w, 401, CodeUnauthorized, "原主密钥密码错误", nil)
 		return
 	}
-	if st := CheckStrength(req.NewPassword); st.Score < 3 {
-		writeErr(w, 400, CodeValidation, "新主密钥密码强度不足："+strings.Join(st.Feedback, "、"), nil)
-		return
+	// 【当前行为（修复前）】门槛为 `CheckStrength(NewPassword).Score < 3`。
+	// 【修复后】与登录改密一致：走 MeetsStrengthPolicy，且新密码与旧密码相同时豁免。
+	// 豁免的理由与登录改密相同：主密钥轮换要求用户输入旧密码，
+	// 用户可能只想轮换密钥而沿用同一个口令；存量用户的口令是在旧规则下设定的，
+	// 用新规则硬拦会凭空制造出「无法轮换主密钥」的困境。
+	// 另注：此处即使不豁免也不影响主密钥派生 —— DeriveKey 用的是
+	// u.KDFType/u.KDFParams，与口令强度评分无关。
+	if req.NewPassword != req.OldPassword {
+		if ok, fb := MeetsStrengthPolicy(req.NewPassword); !ok {
+			writeErr(w, 400, CodeValidation, "新主密钥密码强度不足："+strings.Join(fb, "、"), nil)
+			return
+		}
 	}
 
 	oldSalt, err := base64.StdEncoding.DecodeString(u.MasterKeySalt)

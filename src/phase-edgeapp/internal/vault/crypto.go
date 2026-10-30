@@ -62,10 +62,28 @@ func DeriveKey(password string, saltRaw []byte, kdfType string, paramsJSON strin
 	return base64.StdEncoding.EncodeToString(key), nil
 }
 
+// ErrKDFParams 表示 users.kdf_params 无法被解析成 KDFParams。
+//
+// 用于让调用方区分「参数损坏」与「普通派生失败」——前者必须给用户可读提示，
+// 因为派生出的密钥与用户设置的不一致，用户永远解不开自己的库。
+var ErrKDFParams = errors.New("kdf_params 解析失败")
+
 func deriveKeyRaw(password string, saltRaw []byte, kdfType, paramsJSON string) ([]byte, error) {
 	params := KDFParams{}
 	if paramsJSON != "" {
-		_ = json.Unmarshal([]byte(paramsJSON), &params)
+		// 【当前行为（修复前）】解析失败被静默忽略：`_ = json.Unmarshal(...)`。
+		// 于是 params 保持零值 → 落到下面的 `ops <= 0 → 默认值` /
+		// `iters <= 0 → 默认值` 兜底分支 → 派生出的主密钥与用户当初设置的不一致
+		// → 用户永远解不开自己的库，且全程没有任何报错（最难排查的一类故障）。
+		//
+		// 【修复后】解析失败立即返回明确错误（可用 errors.Is(err, ErrKDFParams) 判定），
+		// 由调用方转成用户可读的提示。
+		//
+		// 兼容性：paramsJSON 为空串是合法的（PHP 版旧用户没有写这个字段），
+		// 此时仍然走零值 + 默认参数的老路径，不受影响。
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrKDFParams, err)
+		}
 	}
 
 	switch kdfType {
@@ -210,15 +228,39 @@ func decryptAs(data, key []byte, format string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		// 【当前行为（修复前）】只检查 `len(ct)%16 == 0`，允许 len(ct)==0：
+		// 此时 out 为空切片，下一行 out[len(out)-1] 会 panic（index out of range），
+		// 且该 panic 发生在 ReencryptAll 的事务中间（不经 HTTP recover），可直接打挂服务。
+		// 修复：显式拒绝空密文。
+		if len(ct) == 0 {
+			return "", errors.New("解密失败：密文长度错误（无数据块）")
+		}
 		if len(ct)%aes.BlockSize != 0 {
 			return "", errors.New("解密失败：密文长度不是块大小的整数倍")
 		}
 		out := make([]byte, len(ct))
 		cipher.NewCBCDecrypter(block, iv).CryptBlocks(out, ct)
-		// 去除 PKCS#7 填充
-		if n := int(out[len(out)-1]); n > 0 && n <= aes.BlockSize && n <= len(out) {
-			out = out[:len(out)-n]
+		// 去除 PKCS#7 填充。
+		//
+		// 【当前行为（修复前）】
+		//	if n := int(out[len(out)-1]); n > 0 && n <= aes.BlockSize && n <= len(out) {
+		//		out = out[:len(out)-n]
+		//	}
+		// n==0（填充字节为 0）或 n>len(out) 时**不报错**，直接把带残留填充的明文返回给调用方：
+		// 调用方（前端）会把填充字节当作密码的一部分显示/复制，用户以为拿到了正确密码，
+		// 实际是错的，且全程无任何错误提示 —— 典型的「静默数据损坏」。
+		//
+		// 【修复后】填充长度非法一律报错；并按 PKCS#7 定义校验全部 n 个填充字节。
+		n := int(out[len(out)-1])
+		if n <= 0 || n > aes.BlockSize || n > len(out) {
+			return "", errors.New("解密失败：PKCS#7 填充长度非法")
 		}
+		for i := len(out) - n; i < len(out); i++ {
+			if int(out[i]) != n {
+				return "", errors.New("解密失败：PKCS#7 填充内容不一致")
+			}
+		}
+		out = out[:len(out)-n]
 		return string(out), nil
 	default: // legacy：无前缀 GCM
 		iv, tag, ct := data[0:12], data[12:28], data[28:]
@@ -271,7 +313,32 @@ func trimSpace(s string) string {
 	return s
 }
 
-// PasswordStrength 密码强度评估（与 PHP 版规则一致，便于跨实现对齐）
+// 密码强度策略常量。
+//
+// 【策略变化说明（本次修复）】
+// 旧规则：长度 >= 6 记 1 分，长度 >= 12 再记 1 分，4 类字符（小写/大写/数字/符号）
+//
+//	各记 1 分，总分上限 5；注册/改密门槛为 Score >= 3。
+//	=> 6 位纯小写 + 1 个数字即可拿到 1+1+1 = 3 分通过注册，密码强度下限形同虚设。
+//
+// 新规则：
+//
+//	1. 长度门槛从 6 位提高到 8 位，并新增 16 位档（长度分 0~3）；
+//	2. 字符类别分保持 0~4（四类各 1 分）；
+//	3. 总分仍封顶 5（levels 数组只有 6 档，超出会越界）；
+//	4. 注册/改密门槛从 3 分提高到 4 分 —— 这是「要求更多字符类别多样性」的落点：
+//	   只有长度达标 + 至少 3 类字符（或 16 位以上的长口令）才能拿到 4 分。
+//
+// 向后兼容：评分只在「注册 / 改密」时作为门槛使用，
+// 登录与解锁流程不看评分，因此存量用户与存量密码完全不受影响。
+const (
+	// minPasswordLen 是注册/改密时要求的最小密码长度。
+	minPasswordLen = 8
+	// minStrengthScore 是注册/改密时要求的最低强度总分。
+	minStrengthScore = 4
+)
+
+// CheckStrength 密码强度评估（与 PHP 版规则对齐，便于跨实现比较）
 type Strength struct {
 	Score    int      `json:"score"`
 	Level    string   `json:"level"`
@@ -281,11 +348,20 @@ type Strength struct {
 func CheckStrength(pw string) Strength {
 	score := 0
 	feedback := []string{}
-	if len(pw) >= 6 {
+
+	// 长度分：8 位起步，12 位、16 位各加 1 分（最高 3 分）
+	switch {
+	case len(pw) >= 16:
+		score += 3
+	case len(pw) >= 12:
+		score += 2
+	case len(pw) >= minPasswordLen:
 		score++
-	} else {
-		feedback = append(feedback, "密码长度至少6位")
+	default:
+		feedback = append(feedback, fmt.Sprintf("密码长度至少%d位", minPasswordLen))
 	}
+
+	// 字符类别分：小写 / 大写 / 数字 / 符号，每类 1 分（最高 4 分）
 	hasLower, hasUpper, hasDigit, hasSymbol := false, false, false, false
 	for _, r := range pw {
 		switch {
@@ -319,12 +395,44 @@ func CheckStrength(pw string) Strength {
 	} else {
 		feedback = append(feedback, "包含特殊字符")
 	}
-	if len(pw) >= 12 {
-		score++
-	}
+
 	levels := []string{"很弱", "弱", "一般", "强", "很强", "极强"}
 	if score > 5 {
 		score = 5
 	}
+	// 长度不达标的密码最高只能评到「强」。
+	//
+	// 【为什么需要这一步】字符类别分最多 4 分，若不加约束，
+	// "A1!bc"（5 位、4 类字符）会拿到 4 分并被注册门槛放行 ——
+	// 这正是本次要消除的「长度形同虚设」漏洞的翻版。
+	// 这里把长度不足 8 位的密码总分封顶在 3 分，使「分数 >= 4」隐含「长度 >= 8」，
+	// 下游门槛判断因此只需看分数，不必重复判断长度。
+	if len(pw) < minPasswordLen && score > 3 {
+		score = 3
+	}
 	return Strength{Score: score, Level: levels[score], Feedback: feedback}
+}
+
+// MeetsStrengthPolicy 判断密码是否满足注册/改密的强度门槛。
+//
+// 【当前行为（修复前）】调用方直接写死 `CheckStrength(pw).Score < 3`，
+// 散落在 register / change-password / change-master 三处，阈值与评分规则耦合在一起，
+// 想调整门槛必须同时改三处，容易漏改。
+// 【修复后】门槛集中在这里（minStrengthScore = 4），调用方只调这一个函数。
+//
+// 判定条件：
+//  1. 长度 >= minPasswordLen（8 位）—— 硬性要求；
+//  2. 强度总分 >= minStrengthScore（4 分）—— 由分数规则隐含「长度达标 +
+//     至少 3 类字符」（或 16 位以上的长口令）。
+//
+// 返回 false 时，第二个返回值给出可直接展示给用户的中文提示。
+func MeetsStrengthPolicy(pw string) (bool, []string) {
+	st := CheckStrength(pw)
+	if len(pw) < minPasswordLen {
+		return false, st.Feedback
+	}
+	if st.Score < minStrengthScore {
+		return false, st.Feedback
+	}
+	return true, nil
 }

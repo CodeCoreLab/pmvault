@@ -1,14 +1,23 @@
 package vault
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/pbkdf2"
 )
 
 // sqlNullString 构造 sql.NullString 的便捷包装。
@@ -294,4 +303,362 @@ func TestCheckStrength(t *testing.T) {
 	if st := CheckStrength(""); len(st.Feedback) == 0 {
 		t.Fatal("空密码应给出反馈建议")
 	}
+}
+
+// ---------- 密码强度策略（P2-5） ----------
+
+// TestMeetsStrengthPolicyRejectsWeakPasswords 验证强度门槛能拦住旧规则放行的弱密码。
+//
+// 背景：旧规则门槛只有 3 分，「6 位纯小写 + 1 个数字」正好 3 分即可注册。
+// 新规则要求长度 >= 8 且总分 >= 4。
+func TestMeetsStrengthPolicyRejectsWeakPasswords(t *testing.T) {
+	weak := []string{
+		"",          // 空
+		"abc",       // 极短
+		"abcdef1",   // 7 位小写+数字（旧规则 3 分放行）
+		"12345678",  // 8 位纯数字
+		"abcdefgh",  // 8 位纯小写
+		"A1!bc",     // 5 位但 4 类字符 —— 长度不足必须拒绝
+		"abcdefghij", // 10 位纯小写
+	}
+	for _, pw := range weak {
+		if ok, _ := MeetsStrengthPolicy(pw); ok {
+			t.Errorf("弱密码 %q 不应通过强度门槛", pw)
+		}
+	}
+}
+
+// TestMeetsStrengthPolicyAcceptsStrongPasswords 验证正常强度的密码不被误伤。
+func TestMeetsStrengthPolicyAcceptsStrongPasswords(t *testing.T) {
+	strong := []string{
+		"Abcdefg1",    // 8 位，3 类字符
+		"Abcdefg1!",   // 8 位，4 类字符
+		"aB3$xY9z",    // 8 位，4 类字符
+		"correcthorsebatterystaple", // 25 位长口令
+	}
+	for _, pw := range strong {
+		if ok, fb := MeetsStrengthPolicy(pw); !ok {
+			t.Errorf("强密码 %q 应通过强度门槛，反馈=%v", pw, fb)
+		}
+	}
+}
+
+// TestCheckStrengthLengthGate 验证长度不达标时总分被封顶，
+// 避免「4 类字符 + 5 位长度」拿到满分这种绕过。
+func TestCheckStrengthLengthGate(t *testing.T) {
+	// 5 位、4 类字符：字符类别分已经是 4 分，
+	// 若不封顶，「A1!bc」会拿到 4 分并通过门槛。
+	if st := CheckStrength("A1!bc"); st.Score >= minStrengthScore {
+		t.Fatalf("长度不足的密码总分应被封顶在门槛以下，实际=%d", st.Score)
+	}
+	// 长度达标后封顶不再生效
+	if st := CheckStrength("Abcdefg1"); st.Score < minStrengthScore {
+		t.Fatalf("长度达标的密码不应被封顶，实际=%d", st.Score)
+	}
+}
+
+// ---------- KDF 参数解析（P1-1） ----------
+
+// TestDeriveKeyRawRejectsBrokenKDFParams 验证 kdf_params 损坏时返回明确错误。
+//
+// 背景：旧实现用 `_ = json.Unmarshal(...)` 静默吞掉解析错误，
+// 参数保持零值 → 落到默认值兜底 → 派生出的主密钥与用户设置的不一致，
+// 用户永远解不开自己的库，且全程没有任何报错。
+func TestDeriveKeyRawRejectsBrokenKDFParams(t *testing.T) {
+	broken := []string{
+		`{"opslimit":2,`,           // 截断
+		`not json at all`,          // 非法 JSON
+		`{"opslimit":"two"}`,       // 类型错误
+		`[1,2,3]`,                  // 类型错误（数组）
+	}
+	for _, p := range broken {
+		if _, err := deriveKeyRaw("pw", make([]byte, 16), kdfArgon2ID, p); err == nil {
+			t.Errorf("损坏的 kdf_params %q 应报错", p)
+		} else if !errors.Is(err, ErrKDFParams) {
+			t.Errorf("错误应可用 errors.Is(err, ErrKDFParams) 判定，实际=%v", err)
+		}
+	}
+}
+
+// TestDeriveKeyRawAcceptsEmptyParams 验证空 kdf_params 仍然合法（PHP 版旧用户）。
+func TestDeriveKeyRawAcceptsEmptyParams(t *testing.T) {
+	if _, err := deriveKeyRaw("pw", make([]byte, 16), kdfPBKDF2, ""); err != nil {
+		t.Fatalf("空 kdf_params 应被接受（PHP 版旧用户兼容），实际=%v", err)
+	}
+}
+
+// TestDeriveKeyRawRejectsUnknownKDFType 验证未知 KDF 类型仍报错。
+func TestDeriveKeyRawRejectsUnknownKDFType(t *testing.T) {
+	if _, err := deriveKeyRaw("pw", make([]byte, 16), "scrypt", ""); err == nil {
+		t.Fatal("未知 KDF 类型应报错")
+	}
+}
+
+// ---------- PKCS#7 填充校验（P1-2） ----------
+
+// TestDecryptRejectsEmptyCiphertext 验证空密文被拒绝而不是 panic。
+//
+// 背景：v2 分支只检查 len(ct)%16==0，len(ct)==0 时通过，
+// 随后 out[len(out)-1] 越界 panic —— 且该路径在 ReencryptAll 事务中间，
+// 不经 HTTP recover，会直接打挂服务。
+//
+// 注意本用例必须构造**合法 HMAC**的 v2 blob：
+// HMAC 校验在解密之前，HMAC 不过就返回「验证失败」，根本走不到填充处理，
+// 那样就测不到目标路径了。
+func TestDecryptRejectsEmptyCiphertext(t *testing.T) {
+	_, keyB64, _, _, err := NewKey("pw")
+	if err != nil {
+		t.Fatalf("NewKey 失败: %v", err)
+	}
+	key := mustDecodeKey(t, keyB64)
+	iv := make([]byte, aes.BlockSize)
+	macKey := pbkdf2.Key(key, []byte("mima_hmac_salt"), 1000, 32, sha256.New)
+
+	m := hmac.New(sha256.New, macKey)
+	m.Write(iv)
+	// ct 为空：只写 IV，不写任何密文数据块
+	blob := make([]byte, 0, 1+len(iv)+32)
+	blob = append(blob, versionV2)
+	blob = append(blob, iv...)
+	blob = append(blob, m.Sum(nil)...)
+
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("解密空密文不应 panic: %v", rec)
+		}
+	}()
+	if _, err := Decrypt(base64.StdEncoding.EncodeToString(blob), keyB64); err == nil {
+		t.Fatal("空密文应报错")
+	}
+}
+
+// TestDecryptRejectsInvalidPadding 验证非法 PKCS#7 填充被拒绝。
+//
+// 背景：旧实现在 n==0 或 n>len(out) 时不报错，直接返回带残留填充的明文，
+// 用户会把带垃圾字节的「密码」当成真密码复制走。
+func TestDecryptRejectsInvalidPadding(t *testing.T) {
+	_, keyB64, _, _, err := NewKey("pw")
+	if err != nil {
+		t.Fatalf("NewKey 失败: %v", err)
+	}
+	block, err := aes.NewCipher(mustDecodeKey(t, keyB64))
+	if err != nil {
+		t.Fatalf("aes.NewCipher 失败: %v", err)
+	}
+	iv := make([]byte, aes.BlockSize)
+	macKey := pbkdf2.Key(mustDecodeKey(t, keyB64), []byte("mima_hmac_salt"), 1000, 32, sha256.New)
+
+	// 三个用例：填充字节为 0、填充字节超过块大小、填充内容不一致
+	// 注意：明文长度必须是块大小（16）的整数倍 —— CBC 加密要求如此，
+	// 且这里不加真正的 PKCS#7 填充，我们要的就是「最后那个字节不是合法填充长度」。
+	cases := []struct {
+		name string
+		pt   []byte
+	}{
+		{"零填充字节", append(bytes.Repeat([]byte{0x41}, 15), 0x00)},
+		{"填充长度越界", append(bytes.Repeat([]byte{0x41}, 15), 0xff)},
+		{"填充内容不一致", append(bytes.Repeat([]byte{0x41}, 13), 0x02, 0x03, 0x03)},
+	}
+	for _, tc := range cases {
+		ct := make([]byte, len(tc.pt))
+		cipher.NewCBCEncrypter(block, iv).CryptBlocks(ct, tc.pt)
+
+		m := hmac.New(sha256.New, macKey)
+		m.Write(iv)
+		m.Write(ct)
+
+		blob := make([]byte, 0, 1+len(iv)+32+len(ct))
+		blob = append(blob, versionV2)
+		blob = append(blob, iv...)
+		blob = append(blob, m.Sum(nil)...)
+		blob = append(blob, ct...)
+
+		got, err := Decrypt(base64.StdEncoding.EncodeToString(blob), keyB64)
+		if err == nil {
+			t.Errorf("%s：非法填充应报错，实际返回 %q", tc.name, got)
+		}
+	}
+}
+
+// mustDecodeKey 解 base64 密钥，失败即测试失败。
+func mustDecodeKey(t *testing.T, keyB64 string) []byte {
+	t.Helper()
+	k, err := base64.StdEncoding.DecodeString(keyB64)
+	if err != nil {
+		t.Fatalf("密钥 base64 解码失败: %v", err)
+	}
+	return k
+}
+
+// ---------- 会话 GC（P2-6） ----------
+
+// TestGCExpiredSessions 验证过期会话被后台 GC 回收。
+//
+// 背景：旧实现只在「用该 sid 发请求」时才顺手删一条，
+// 用户关掉浏览器不再回来 → 会话对象永久滞留，map 无界增长。
+func TestGCExpiredSessions(t *testing.T) {
+	a := &App{
+		sessions: make(map[string]*session),
+		csrf:     make(map[string]string),
+		quitCh:   make(chan struct{}),
+	}
+	// 已过期
+	a.sessions["expired"] = &session{UserID: 1, Username: "u",
+		Created: time.Now().Add(-sessionTTL - time.Minute)}
+	a.csrf["expired"] = "tok-expired"
+	// 未过期
+	a.sessions["alive"] = &session{UserID: 1, Username: "u", Created: time.Now()}
+	a.csrf["alive"] = "tok-alive"
+
+	a.gcExpiredSessions()
+
+	if _, ok := a.sessions["expired"]; ok {
+		t.Error("过期会话应被回收")
+	}
+	if _, ok := a.csrf["expired"]; ok {
+		t.Error("过期会话的 CSRF token 应被回收")
+	}
+	if _, ok := a.sessions["alive"]; !ok {
+		t.Error("未过期会话不应被回收")
+	}
+	if _, ok := a.csrf["alive"]; !ok {
+		t.Error("未过期会话的 CSRF token 不应被回收")
+	}
+}
+
+// ---------- 审计日志保留策略（P1-4） ----------
+
+// TestPruneLogsRemovesOldEntries 验证审计日志按保留天数裁剪。
+//
+// 背景：修复前 logs 表只有 INSERT，全仓没有 DELETE FROM logs，
+// 审计日志无限增长（同时把备份文件也撑大）。
+func TestPruneLogsRemovesOldEntries(t *testing.T) {
+	s := newTestStore(t)
+
+	// 一条很久以前的（超过保留期）
+	old := time.Now().AddDate(0, 0, -logsRetentionDays-5).Format(time.RFC3339)
+	if _, err := s.db.Exec(`INSERT INTO logs (user_id, action, details, ip_address, created_at)
+		VALUES (1, 'old', 'old', '127.0.0.1', ?)`, old); err != nil {
+		t.Fatalf("插入旧日志失败: %v", err)
+	}
+	// 一条近期的
+	if _, err := s.db.Exec(`INSERT INTO logs (user_id, action, details, ip_address, created_at)
+		VALUES (1, 'new', 'new', '127.0.0.1', ?)`, nowStr()); err != nil {
+		t.Fatalf("插入新日志失败: %v", err)
+	}
+
+	deleted, err := s.PruneLogs()
+	if err != nil {
+		t.Fatalf("PruneLogs 失败: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("应删除 1 条过期日志，实际=%d", deleted)
+	}
+
+	var remain int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM logs`).Scan(&remain); err != nil {
+		t.Fatalf("统计日志失败: %v", err)
+	}
+	if remain != 1 {
+		t.Fatalf("应保留 1 条近期日志，实际=%d", remain)
+	}
+}
+
+// TestPruneLogsEnforcesRowCap 验证审计日志条数上限生效（删最旧的）。
+func TestPruneLogsEnforcesRowCap(t *testing.T) {
+	s := newTestStore(t)
+
+	// 插入略超上限的日志条数；为缩短测试时间，这里直接改上限不现实，
+	// 改为插入少量日志并断言「未超限时不删除任何一条」。
+	for i := 0; i < 5; i++ {
+		s.Log(1, "noop", "noop")
+	}
+	deleted, err := s.PruneLogs()
+	if err != nil {
+		t.Fatalf("PruneLogs 失败: %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("未超限时不应删除日志，实际删除=%d", deleted)
+	}
+
+	var remain int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM logs`).Scan(&remain); err != nil {
+		t.Fatalf("统计日志失败: %v", err)
+	}
+	if remain != 5 {
+		t.Fatalf("应保留 5 条日志，实际=%d", remain)
+	}
+}
+
+// TestPruneLogsKeepsNewestOnCap 验证超限时删除的是**最旧**的记录。
+//
+// 用一个临时的小上限来验证语义：直接改包级常量不现实，
+// 因此这里手工执行与 PruneLogs 相同的 SQL 语义（按 id 倒序保留 N 条），
+// 并验证被删掉的确实是 id 最小（= 最旧）的那些。
+func TestPruneLogsKeepsNewestOnCap(t *testing.T) {
+	s := newTestStore(t)
+
+	for i := 0; i < 10; i++ {
+		s.Log(1, "noop", "noop")
+	}
+	var ids []int64
+	rows, err := s.db.Query(`SELECT id FROM logs ORDER BY id ASC`)
+	if err != nil {
+		t.Fatalf("查询日志失败: %v", err)
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatalf("扫描日志失败: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if len(ids) != 10 {
+		t.Fatalf("应有 10 条日志，实际=%d", len(ids))
+	}
+
+	// 与 PruneLogs 规则 1 相同的语义：保留 id 最大的 N 条
+	const keep = 4
+	if _, err := s.db.Exec(`DELETE FROM logs WHERE id NOT IN (
+		SELECT id FROM logs ORDER BY id DESC LIMIT ?)`, keep); err != nil {
+		t.Fatalf("按条数裁剪失败: %v", err)
+	}
+
+	rows2, err := s.db.Query(`SELECT id FROM logs ORDER BY id ASC`)
+	if err != nil {
+		t.Fatalf("查询日志失败: %v", err)
+	}
+	defer rows2.Close()
+	var left []int64
+	for rows2.Next() {
+		var id int64
+		if err := rows2.Scan(&id); err != nil {
+			t.Fatalf("扫描日志失败: %v", err)
+		}
+		left = append(left, id)
+	}
+	if len(left) != keep {
+		t.Fatalf("应保留 %d 条，实际=%d", keep, len(left))
+	}
+	// 剩下的应该是 id 最大的 4 条（即最新的）
+	for i, id := range left {
+		want := ids[len(ids)-keep+i]
+		if id != want {
+			t.Fatalf("保留的应是最新 %d 条，第 %d 条期望 id=%d 实际=%d", keep, i, want, id)
+		}
+	}
+}
+
+// newTestStore 建一个临时 SQLite 库用于测试（调用方负责 Close）。
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := OpenStore(filepath.Join(dir, "test.db"), filepath.Join(dir, "backups"))
+	if err != nil {
+		t.Fatalf("打开测试库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
 }

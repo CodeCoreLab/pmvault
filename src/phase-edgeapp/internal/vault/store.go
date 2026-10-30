@@ -10,9 +10,12 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -22,6 +25,13 @@ type Store struct {
 	db        *sql.DB
 	dbPath    string
 	backupDir string
+
+	// backupACLOnce 保证备份目录的 ACL 只收紧一次。
+	//
+	// 【为什么需要】Windows 上收紧 ACL 需要起 icacls 子进程（约几十毫秒），
+	// 而 Backup() 在「每次登录」「改主密钥」「手动备份」时都会被调用，
+	// 每次都起一个进程没有必要 —— 目录的 ACL 一旦设好就会持续生效。
+	backupACLOnce sync.Once
 }
 
 func OpenStore(dbPath, backupDir string) (*Store, error) {
@@ -574,7 +584,74 @@ func (s *Store) Stats(userID int64) (map[string]any, error) {
 	}, nil
 }
 
-// ---------- ��作日志 ----------
+// ---------- 操作日志 ----------
+
+// 审计日志保留策略。
+//
+// 【当前行为（修复前）】logs 表只有 INSERT，全仓找不到任何 DELETE FROM logs，
+// 于是审计日志随使用时间无限增长：
+//   - 单机库文件越来越大，备份（VACUUM INTO 出来的完整副本）也跟着变大；
+//   - 长期运行后 logs 表动辄数十万行，查询与管理界面都变慢；
+//   - 更关键的是，审计日志里全是「谁在什么时候做了什么」，越久远的记录
+//     对追责越无价值，却和近期的记录一起挤在同一个表里。
+//
+// 【策略】两条规则同时生效（取并集，即两条都满足才保留）：
+//  1. 按时间：只保留最近 logsRetentionDays 天的记录；
+//  2. 按条数：总量不超过 logsMaxRows 条，超出时删除最旧的。
+//
+// 为什么两条都要：
+//   - 只按时间 → 审计表大小仍与「操作频率」正相关，高频使用时依旧会涨到几十 MB；
+//   - 只按条数 → 无法保证「近期记录一定在」，可能把昨天的关键记录按条数删掉。
+//   两条叠加后，既保证表的体积有硬上限，也保证近期的审计线索不会被挤掉。
+//
+// 保留期为常量，调整策略只需改这两个数字，无需改调用点。
+const (
+	// logsRetentionDays 审计日志的最长保留天数（默认 90 天 ≈ 一个季度）。
+	//
+	// 取 90 天的理由：密码管理器的审计价值集中在「近期是否发生过异常访问」，
+	// 90 天覆盖一个完整季度的回溯需求；再长的历史对本工具已无实际意义。
+	logsRetentionDays = 90
+	// logsMaxRows 审计日志的最大条数（默认 20000 条）。
+	//
+	// 取 20000 行的理由：单行约 100 字节 → 上限约 2 MB，
+	// 加上 SQLite 页开销也在个位数 MB 量级，对本地应用完全可接受。
+	logsMaxRows = 20000
+)
+
+// PruneLogs 按保留策略裁剪审计日志，返回被删除的条数。
+//
+// 【当前行为（修复前）】没有这个方法，logs 表只增不减。
+//
+// 实现要点：
+//   - 按时间删除用 `datetime(created_at) < ?` 比较。created_at 存的是 RFC3339
+//     （如 "2026-10-30T09:36:40+08:00"），SQLite 的 datetime() 能解析这种格式；
+//     旧版 PHP 写入的是 "Y-m-d H:i:s" 本地时间字符串，也能被解析。
+//     两者语义不同（一个带时区一个不带），但对「90 天前」的粗粒度判定足够。
+//   - 按条数删除用 `id NOT IN (SELECT id ... ORDER BY id DESC LIMIT ?)`，
+//     id 是自增主键，插入顺序即时间顺序，用它排序不会受时间格式差异影响。
+//
+// 裁剪失败不应中断业务流程（审计写入失败不影响用户操作），因此错误由调用方记录。
+func (s *Store) PruneLogs() (int64, error) {
+	// 规则 1：按条数上限删最旧的
+	res, err := s.db.Exec(`DELETE FROM logs WHERE id NOT IN (
+		SELECT id FROM logs ORDER BY id DESC LIMIT ?
+	)`, logsMaxRows)
+	if err != nil {
+		return 0, fmt.Errorf("按条数裁剪审计日志失败: %w", err)
+	}
+	byCount, _ := res.RowsAffected()
+
+	// 规则 2：按保留天数删过期的
+	// 阈值用 UTC 计算，再转成 SQLite 能比较的格式。
+	cutoff := time.Now().AddDate(0, 0, -logsRetentionDays).UTC().Format("2006-01-02 15:04:05")
+	res2, err := s.db.Exec(`DELETE FROM logs WHERE datetime(created_at) < ?`, cutoff)
+	if err != nil {
+		return byCount, fmt.Errorf("按时间裁剪审计日志失败: %w", err)
+	}
+	byAge, _ := res2.RowsAffected()
+
+	return byCount + byAge, nil
+}
 
 func (s *Store) Log(userID int64, action, details string) {
 	_, err := s.db.Exec(`INSERT INTO logs (user_id, action, details, ip_address, created_at) VALUES (?,?,?,?,?)`,
@@ -601,16 +678,124 @@ func (s *Store) Backup(prefix string) (string, int64, error) {
 	if err := os.MkdirAll(s.backupDir, 0o700); err != nil {
 		return "", 0, err
 	}
+	// 收紧备份目录 ACL（见 restrictBackupDirACL 的说明）。
+	// 失败只记录日志、不阻断备份：备份本身失败会让用户丢数据，
+	// 而 ACL 收紧失败只是降低了一层防护，不能反过来阻断主流程。
+	s.backupACLOnce.Do(func() { restrictBackupDirACL(s.backupDir) })
 	path := s.uniquePath(prefix)
 	esc := strings.ReplaceAll(filepath.ToSlash(path), "'", "''")
 	if _, err := s.db.Exec("VACUUM INTO '" + esc + "'"); err != nil {
 		return "", 0, err
 	}
+	// 备份文件本身也要收紧权限（VACUUM INTO 由 SQLite 创建，权限取自 umask）。
+	restrictBackupFileMode(path)
 	st, err := os.Stat(path)
 	if err != nil || st.Size() == 0 {
 		return "", 0, fmt.Errorf("备份文件创建失败或为空")
 	}
 	return filepath.Base(path), st.Size(), nil
+}
+
+// restrictBackupDirACL 收紧备份目录的访问控制。
+//
+// 【当前行为（修复前）】备份目录只用 os.MkdirAll(0o700) 创建。
+// 在 POSIX 上 0700 已足够；但在 Windows 上 Go 的 os.MkdirAll 的权限参数
+// 几乎无效（Windows 用 ACL 而非 POSIX 权限位），目录实际继承父目录的 ACL，
+// 于是 data\backups 里的完整库副本对同机其他账号可能是可读的。
+//
+// 【修复后】
+//   - Windows：调用 icacls 去掉继承的 ACE，显式授予
+//     当前用户 / SYSTEM / Administrators 完全控制；
+//   - 其他平台：chmod 0700（等价于「仅属主可访问」）。
+//
+// 【已知取舍与升级路径（有意不做加密层）】
+// 备份仍然是**未加密的完整库副本**：主密钥在内存里，密文库被复制到
+// data\backups\ 之后，攻击面从「1 个文件」变成「1 + N 个文件」。
+// 本次刻意不引入新的加密层，原因是：
+//   1. 备份必须在用户已遗忘主密钥时仍能作为恢复手段存在 ——
+//      若用主密钥加密备份，用户忘记主密钥后备份也就废了，等于没有备份；
+//   2. 引入第二把密钥就意味着第二套密钥管理问题（存哪、怎么轮换、丢了怎么办），
+//      复杂度与风险都超出「收紧 ACL」这一最小改动能覆盖的范围。
+// 升级路径（后续版本可选）：
+//   - 用「用户口令派生的独立密钥」加密备份文件（口令丢失则备份不可用，
+//     但主库仍可用，二者职责分离）；
+//   - 或把备份移出 data 目录，落到用户显式指定的位置（OneDrive / U 盘），
+//     并支持「导出为加密容器」。
+// 在那之前，本函数把「同机其他账号可读」这一层风险压到最低。
+func restrictBackupDirACL(dir string) {
+	if runtime.GOOS == "windows" {
+		// Windows：用 icacls 收紧 ACL。
+		//
+		// 分两步执行，顺序不能反：
+		//   1) 先显式授权（当前用户 + SYSTEM + Administrators）；
+		//   2) 再去掉继承项。
+		// 若把 /inheritance:r 放在前面，一旦授权失败就会得到一个
+		// 「没有任何继承权限、也没有显式权限」的目录 —— 用户连自己的备份都打不开，
+		// 那比原来的问题严重得多。分两步后，授权失败就直接放弃收紧，
+		// 保留继承权限（暴露面没变小，但也没把用户锁在门外）。
+		//
+		// 授权当前用户用账户名；SYSTEM / Administrators 用 "*SID"：
+		// 这两个内置组名在非英文 Windows 上是本地化的（"管理员" 等），
+		// 按名字授权会失败，而 SID 在任何语言下都唯一。
+		// S-1-5-18 = SYSTEM，S-1-5-32-544 = Administrators。
+		ident := currentUserIdent()
+		if ident == "" {
+			logf("无法确定当前用户身份，跳过备份目录 ACL 收紧: %s", dir)
+			return
+		}
+		grant := exec.Command("icacls", dir, "/grant",
+			ident+":(OI)(CI)F",
+			"*S-1-5-18:(OI)(CI)F",
+			"*S-1-5-32-544:(OI)(CI)F")
+		if out, err := grant.CombinedOutput(); err != nil {
+			logf("备份目录授权失败（保留继承权限） %s: %v (%s)", dir, err, strings.TrimSpace(string(out)))
+			return
+		}
+		inherit := exec.Command("icacls", dir, "/inheritance:r")
+		if out, err := inherit.CombinedOutput(); err != nil {
+			logf("备份目录去除继承权限失败 %s: %v (%s)", dir, err, strings.TrimSpace(string(out)))
+		}
+		return
+	}
+	// POSIX：权限位就是 ACL，0700 = 仅属主可读写执行。
+	if err := os.Chmod(dir, 0o700); err != nil {
+		logf("收紧备份目录权限失败 %s: %v", dir, err)
+	}
+}
+
+// restrictBackupFileMode 收紧单个备份文件的权限。
+//
+// POSIX：0600（仅属主可读写）。
+// Windows：文件权限位无效，访问控制继承自已收紧 ACL 的备份目录，无需额外处理。
+func restrictBackupFileMode(path string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		logf("收紧备份文件权限失败 %s: %v", path, err)
+	}
+}
+
+// currentUserIdent 返回当前用户的 icacls 授权标识（账户名形式）。
+//
+// 为什么不用 os/user 的 SID：os/user.User 结构体里**没有** Sid 字段
+// （该字段只存在于 Windows 专用的扩展类型里），拿不到 SID；
+// 而 icacls 接受 "DOMAIN\user" 形式的账户名，效果等价。
+//
+// 优先拼 "域\用户名"（域账号必须带域名前缀，否则 icacls 可能匹配到同名本地账号），
+// 拼不出就退回裸用户名。
+func currentUserIdent() string {
+	name := os.Getenv("USERNAME")
+	if name == "" {
+		name = os.Getenv("USER")
+	}
+	if name == "" {
+		return ""
+	}
+	if domain := os.Getenv("USERDOMAIN"); domain != "" {
+		return domain + `\` + name
+	}
+	return name
 }
 
 func (s *Store) uniquePath(prefix string) string {
