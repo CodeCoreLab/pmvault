@@ -9,16 +9,20 @@ CIPHER=$(sqlite3 "$DB" "select cipher from passwords limit 1;")
 echo "salt   = $SALT"
 echo "cipher = ${CIPHER:0:36}..."
 
-echo "--- Go 侧：派生的主密钥 ---"
-GOMK=$(cd /opt/lab/goproto && ./vault -salt "$SALT" -pw 'Master5678!xyz' -cipher "$CIPHER" | tee /tmp/go_out.txt | grep '主密钥(base64)' | sed 's/.*: //')
+echo "--- Go 侧：派生的主密钥指纹（不打印密钥本身）---"
+GOMK=$(cd /opt/lab/goproto && ./vault -salt "$SALT" -pw 'Master5678!xyz' -cipher "$CIPHER" | tee /tmp/go_out.txt | grep '主密钥指纹' | sed 's/.*: //')
 echo "  $GOMK"
 
-echo "--- PHP 侧：同一密码派生的主密钥（应完全一致）---"
+echo "--- PHP 侧：同一密码派生的主密钥（指纹应一致）---"
+# PHP 侧同时算出指纹与密钥本体：
+#   - 指纹用于比对（人工核对不需要看到密钥本身）
+#   - 密钥本体仅在本脚本进程内变量中用于后续加解密，不回显
 PHPMK=$(php -r 'require "/opt/lab/pm2.0/includes/config.php"; require "/opt/lab/pm2.0/includes/security.php";
 $k = Security::deriveKey($argv[1], base64_decode($argv[2]), "pbkdf2", ["iterations"=>600000]);
 echo $k["key"];' -- 'Master5678!xyz' "$SALT" 2>&1)
-echo "  $PHPMK"
-if [ "$GOMK" = "$PHPMK" ]; then echo "  ==> 主密钥一致 ✓"; else echo "  ==> 不一致 ✗"; fi
+PHPMKFP=$(php -r 'echo substr(hash("sha256", base64_decode($argv[1])), 0, 8);' -- "$PHPMK" 2>&1)
+echo "  $PHPMKFP"
+if [ -n "$GOMK" ] && [ "$GOMK" = "$PHPMKFP" ]; then echo "  ==> 主密钥一致 ✓"; else echo "  ==> 不一致 ✗"; fi
 
 GOCIPHER=$(grep '^GO_CIPHER=' /tmp/go_out.txt | cut -d= -f2-)
 PHPCIPHER=$(php -r 'require "/opt/lab/pm2.0/includes/config.php"; require "/opt/lab/pm2.0/includes/security.php";

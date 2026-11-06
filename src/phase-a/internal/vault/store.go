@@ -303,6 +303,25 @@ func (s *Store) UpdateLoginPassword(id int64, hash string) error {
 
 // ---------- 分类 ----------
 
+// 列表分页的 limit 取值范围。
+//
+// 生效值必须由 clampListLimit 唯一决定：handler 回显的 limit 与
+// store 实际用于 LIMIT 的值必须一致，否则客户端会按错误的页大小算分页。
+const (
+	defaultListLimit = 20
+	maxListLimit     = 200
+)
+
+// clampListLimit 把请求里的 limit 钳制到实际生效的值。
+//
+// 规则（与历史行为保持一致）：非正数或超过上限的一律回落到默认值。
+func clampListLimit(limit int) int {
+	if limit <= 0 || limit > maxListLimit {
+		return defaultListLimit
+	}
+	return limit
+}
+
 type Category struct {
 	ID        int64  `json:"id"`
 	ParentID  int64  `json:"parent_id"`
@@ -329,7 +348,22 @@ func (s *Store) ListCategories(userID int64) ([]Category, error) {
 	return out, rows.Err()
 }
 
+// AddCategory 新建分类。
+//
+// parentID 大于 0 时必须校验父分类真实存在且属于同一用户：
+// 否则会产生悬空 parent_id，或指向其他用户的分类（跨用户越权）。
+// 校验失败返回 ErrParentCategoryNotFound，由调用方转成对外错误码。
 func (s *Store) AddCategory(userID int64, name string, parentID int64, icon string) (int64, error) {
+	if parentID > 0 {
+		var cnt int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM categories WHERE id=? AND user_id=?`,
+			parentID, userID).Scan(&cnt); err != nil {
+			return 0, err
+		}
+		if cnt == 0 {
+			return 0, ErrParentCategoryNotFound
+		}
+	}
 	var maxOrder int
 	_ = s.db.QueryRow(`SELECT COALESCE(MAX(sort_order),0) FROM categories WHERE user_id=? AND parent_id=?`,
 		userID, parentID).Scan(&maxOrder)
@@ -372,8 +406,12 @@ func (s *Store) DeleteCategory(userID, id int64) error {
 	return tx.Commit()
 }
 
+// CategoryChildrenIDs 返回指定分类及其全部子孙分类的 id 集合。
+//
+// BFS 带 visited 集合防止 parent_id 成环（历史数据或手工改库可能造成环）时无限循环。
 func (s *Store) CategoryChildrenIDs(userID, id int64) ([]int64, error) {
 	ids := []int64{id}
+	visited := map[int64]bool{id: true}
 	queue := []int64{id}
 	for len(queue) > 0 {
 		cur := queue[0]
@@ -388,6 +426,10 @@ func (s *Store) CategoryChildrenIDs(userID, id int64) ([]int64, error) {
 				rows.Close()
 				return nil, err
 			}
+			if visited[cid] {
+				continue
+			}
+			visited[cid] = true
 			ids = append(ids, cid)
 			queue = append(queue, cid)
 		}
@@ -451,9 +493,7 @@ func (s *Store) ListEntries(userID int64, o ListOptions) ([]Entry, int, error) {
 	if page < 1 {
 		page = 1
 	}
-	if limit <= 0 || limit > 200 {
-		limit = 20
-	}
+	limit = clampListLimit(limit)
 	args = append(args, limit, (page-1)*limit)
 
 	rows, err := s.db.Query(q, args...)
@@ -653,12 +693,18 @@ func (s *Store) PruneLogs() (int64, error) {
 	return byCount + byAge, nil
 }
 
-func (s *Store) Log(userID int64, action, details string) {
+// Log 写一条审计日志。
+//
+// 【修复前】错误只写服务端日志、函数返回 void，调用方完全无感 —— 审计被静默丢弃。
+// 【修复后】写入失败返回错误（包装 ErrAuditLogUnavailable），
+// 由调用方决定如何处理：业务照常完成但必须让调用方感知到审计缺失。
+func (s *Store) Log(userID int64, action, details string) error {
 	_, err := s.db.Exec(`INSERT INTO logs (user_id, action, details, ip_address, created_at) VALUES (?,?,?,?,?)`,
 		userID, action, details, "127.0.0.1", nowStr())
 	if err != nil {
-		logf("写入操作日志失败: %v", err)
+		return fmt.Errorf("%w: %v", ErrAuditLogUnavailable, err)
 	}
+	return nil
 }
 
 // ---------- 备份 ----------

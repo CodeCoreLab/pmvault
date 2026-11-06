@@ -16,8 +16,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -29,6 +31,25 @@ const (
 	versionV3 byte = 0x03
 	versionV2 byte = 0x02
 )
+
+// keyFingerprint 返回派生密钥的指纹（sha256 前 8 位十六进制）。
+//
+// 【为什么不能打印密钥本身】主密钥是解密一切历史数据的关键材料，
+// 把它打到 stdout 会：落进终端回滚缓冲 / CI 日志 / 截图 / 进程输出重定向文件。
+// 人工核对「两侧派生出的是不是同一个密钥」只需要一个指纹就够了：
+// 指纹相同即等价，指纹不同即不等价，无需看到密钥本身。
+func keyFingerprint(key []byte) string {
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+// keySummary 返回展示用的派生密钥摘要行：只含指纹，绝不含密钥本身。
+//
+// 单独抽出来是为了能直接对「输出内容」做断言（见 main_test.go），
+// 避免测试只能靠 grep 源码这种脆弱手段。
+func keySummary(label string, key []byte) string {
+	return fmt.Sprintf("%s: %s", label, keyFingerprint(key))
+}
 
 // derivePBKDF2 复现 PHP hash_pbkdf2('sha256', pw, salt, 600000, 32, true)
 func derivePBKDF2(password string, salt []byte, iterations int) []byte {
@@ -121,60 +142,73 @@ func sniff(blobB64 string) string {
 }
 
 func main() {
-	saltB64 := flag.String("salt", "", "master_key_salt（base64，取自 users 表）")
-	password := flag.String("pw", "", "主密钥密码")
-	cipherB64 := flag.String("cipher", "", "待解密的 v3 密文（base64，取自 passwords.cipher）")
-	iter := flag.Int("iter", 600000, "PBKDF2 迭代次数")
-	flag.Parse()
+	os.Exit(run(os.Stdout, os.Args[1:]))
+}
+
+// run 是真正的主体；main 只负责把退出码交给操作系统。
+//
+// 拆开是为了让测试能捕获输出内容并断言「输出里没有派生主密钥明文」。
+func run(out io.Writer, args []string) int {
+	fs := flag.NewFlagSet("vault", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	saltB64 := fs.String("salt", "", "master_key_salt（base64，取自 users 表）")
+	password := fs.String("pw", "", "主密钥密码")
+	cipherB64 := fs.String("cipher", "", "待解密的 v3 密文（base64，取自 passwords.cipher）")
+	iter := fs.Int("iter", 600000, "PBKDF2 迭代次数")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	if *saltB64 == "" || *password == "" {
 		fmt.Fprintln(os.Stderr, "用法: vault -salt <b64> -pw <password> [-cipher <b64>]")
-		os.Exit(2)
+		return 2
 	}
 
 	salt, err := base64.StdEncoding.DecodeString(*saltB64)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "salt 解码失败: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
-	fmt.Printf("salt 长度        : %d 字节\n", len(salt))
+	fmt.Fprintf(out, "salt 长度        : %d 字节\n", len(salt))
 
 	// --- PBKDF2 派生（与 PHP 交互的必需路径）---
 	t0 := time.Now()
 	key := derivePBKDF2(*password, salt, *iter)
 	dur := time.Since(t0)
-	fmt.Printf("主密钥(base64)   : %s\n", base64.StdEncoding.EncodeToString(key))
-	fmt.Printf("PBKDF2-%d 耗时  : %.0f ms\n", *iter, float64(dur.Microseconds())/1000.0)
+	// 只打印指纹，不打印派生主密钥本身（见 keyFingerprint 的说明）。
+	fmt.Fprintln(out, keySummary("主密钥指纹(sha256前8位)", key))
+	fmt.Fprintf(out, "PBKDF2-%d 耗时  : %.0f ms\n", *iter, float64(dur.Microseconds())/1000.0)
 
 	// --- Argon2id 对比（PHP 侧未能启用）---
 	t0 = time.Now()
 	a2 := deriveArgon2id(*password, salt, 2, 64*1024)
-	fmt.Printf("Argon2id 耗时    : %.0f ms  (m=64MiB, t=2, p=1)\n", float64(time.Since(t0).Microseconds())/1000.0)
-	fmt.Printf("Argon2id 前16位  : %s...\n", base64.StdEncoding.EncodeToString(a2)[:16])
+	fmt.Fprintf(out, "Argon2id 耗时    : %.0f ms  (m=64MiB, t=2, p=1)\n", float64(time.Since(t0).Microseconds())/1000.0)
+	fmt.Fprintln(out, keySummary("Argon2id 指纹", a2))
 
 	if *cipherB64 == "" {
-		return
+		return 0
 	}
 
-	fmt.Printf("\n格式嗅探         : %s\n", sniff(*cipherB64))
+	fmt.Fprintf(out, "\n格式嗅探         : %s\n", sniff(*cipherB64))
 	plain, err := decryptV3(*cipherB64, key)
 	if err != nil {
-		fmt.Printf("解密结果         : 失败 -> %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(out, "解密结果         : 失败 -> %v\n", err)
+		return 1
 	}
-	fmt.Printf("解密结果         : %q   <== 与 PHP 明文一致即证明互通\n", plain)
+	fmt.Fprintf(out, "解密结果         : %q   <== 与 PHP 明文一致即证明互通\n", plain)
 
 	// --- 反向：Go 加密，再自解（同时可交 PHP 验证）---
 	round, err := encryptV3(plain, key)
 	if err != nil {
-		fmt.Printf("加密回写失败     : %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(out, "加密回写失败     : %v\n", err)
+		return 1
 	}
-	fmt.Printf("GO_CIPHER=%s\n", round)
+	fmt.Fprintf(out, "GO_CIPHER=%s\n", round)
 	back, err := decryptV3(round, key)
 	if err != nil {
-		fmt.Printf("回环失败         : %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(out, "回环失败         : %v\n", err)
+		return 1
 	}
-	fmt.Printf("回环校验         : %q -> %s\n", back, map[bool]string{true: "OK", false: "FAIL"}[back == plain])
+	fmt.Fprintf(out, "回环校验         : %q -> %s\n", back, map[bool]string{true: "OK", false: "FAIL"}[back == plain])
+	return 0
 }

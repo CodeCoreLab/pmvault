@@ -11,15 +11,17 @@ echo "cipher=${CIPHER:0:36}..."
 
 cd /opt/lab/rustproto
 OUT=$(VAULT_SALT="$SALT" VAULT_PW='Master5678!xyz' ./target/release/vault_proto "$CIPHER" 2>&1)
-echo "$OUT" | grep -E '格式嗅探|派生的主密钥|解密结果|自解密回环|Argon2id'
-RUSTMK=$(echo "$OUT" | grep '派生的主密钥' | sed 's/.*: //')
+echo "$OUT" | grep -E '格式嗅探|主密钥指纹|解密结果|自解密回环|Argon2id'
+# 原型只输出指纹（不再输出主密钥明文），比对时也用指纹
+RUSTMK=$(echo "$OUT" | grep '主密钥指纹' | sed 's/.*: //')
 RUSTC=$(echo "$OUT" | grep '^RUSTCIPHER=' | cut -d= -f2-)
 
 PHPMK=$(php -r 'require "/opt/lab/pm2.0/includes/config.php"; require "/opt/lab/pm2.0/includes/security.php";
 $k = Security::deriveKey($argv[1], base64_decode($argv[2]), "pbkdf2", ["iterations"=>600000]);
 echo $k["key"];' -- 'Master5678!xyz' "$SALT" 2>&1)
-echo "PHP 派生主密钥 = $PHPMK"
-[ "$RUSTMK" = "$PHPMK" ] && echo "==> Rust 与 PHP 主密钥一致 ✓" || echo "==> 不一致 ✗"
+PHPMKFP=$(php -r 'echo substr(hash("sha256", base64_decode($argv[1])), 0, 8);' -- "$PHPMK" 2>&1)
+echo "PHP 派生主密钥指纹 = $PHPMKFP"
+[ -n "$RUSTMK" ] && [ "$RUSTMK" = "$PHPMKFP" ] && echo "==> Rust 与 PHP 主密钥一致 ✓" || echo "==> 不一致 ✗"
 
 echo
 echo "--- PHP 解 Rust 生成的密文 ---"

@@ -8,10 +8,25 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use pbkdf2::pbkdf2_hmac;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 
 const V3: u8 = 0x03;
 const V2: u8 = 0x02;
+
+/// 派生密钥的指纹（sha256 前 8 位十六进制）。
+///
+/// 【为什么不能打印密钥本身】主密钥是解密一切历史数据的关键材料，
+/// 把它打到 stdout 会落进终端回滚缓冲 / CI 日志 / 截图 / 输出重定向文件。
+/// 人工核对「两侧派生出的是不是同一个密钥」只需要一个指纹就够了。
+fn key_fingerprint(key: &[u8]) -> String {
+    let digest = Sha256::digest(key);
+    digest.iter().map(|b| format!("{b:02x}")).collect::<String>()[..8].to_string()
+}
+
+/// 展示用的派生密钥摘要行：只含指纹，绝不含密钥本身。
+fn key_summary(label: &str, key: &[u8]) -> String {
+    format!("{label}: {}", key_fingerprint(key))
+}
 
 /// 与 PHP 相同的 KDF：PBKDF2-HMAC-SHA256
 fn derive_key_pbkdf2(password: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
@@ -99,7 +114,8 @@ fn main() {
     println!("salt 长度     : {} 字节", salt.len());
 
     let key = derive_key_pbkdf2(&password, &salt, 600_000);
-    println!("派生的主密钥  : {}", B64.encode(key));
+    // 只打印指纹，不打印派生主密钥本身（见 key_fingerprint 的说明）。
+    println!("{}", key_summary("主密钥指纹(sha256前8位)", &key));
 
     match decrypt_v3(&cipher_v3, &key) {
         Ok(plain) => {
@@ -113,5 +129,49 @@ fn main() {
     }
 
     let a2key = derive_key_argon2id(&password, &salt, 65536, 2);
-    println!("Argon2id 派生 : {}... (m=64MB,t=2,p=1 可运行)", &B64.encode(a2key)[..16]);
+    println!("Argon2id 指纹  : {}", key_fingerprint(&a2key));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证摘要行不含密钥材料本身（修复前原型直接打印 base64 主密钥）。
+    #[test]
+    fn key_summary_contains_no_key_material() {
+        let key = b"0123456789abcdef0123456789abcdef";
+        let line = key_summary("主密钥指纹(sha256前8位)", key);
+
+        assert!(!line.contains(&B64.encode(key)), "摘要行含 base64 密钥: {line}");
+        assert!(!line.contains(std::str::from_utf8(key).unwrap()), "摘要行含密钥原始字节: {line}");
+        assert!(line.contains(&key_fingerprint(key)), "摘要行应含指纹: {line}");
+    }
+
+    /// 验证指纹稳定、长度固定为 8 位小写十六进制，且能区分不同密钥。
+    #[test]
+    fn key_fingerprint_is_stable_and_distinguishing() {
+        let k1 = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let k2 = b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+        assert_eq!(key_fingerprint(k1), key_fingerprint(k1));
+        assert_ne!(key_fingerprint(k1), key_fingerprint(k2));
+
+        for k in [k1, k2] {
+            let fp = key_fingerprint(k);
+            assert_eq!(fp.len(), 8, "指纹长度应为 8: {fp}");
+            assert!(fp.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        }
+    }
+
+    /// 验证派生出的主密钥确实不出现在摘要里（黑盒等价：跑一遍真实派生）。
+    #[test]
+    fn derived_master_key_not_leaked_by_summary() {
+        let salt = B64.decode("R8wK0u9p6uwNKIqNc370hQ==").unwrap();
+        let key = derive_key_pbkdf2("Master5678!xyz", &salt, 1000);
+        let line = key_summary("主密钥指纹(sha256前8位)", &key);
+
+        assert!(!line.contains(&B64.encode(key)), "摘要行含派生主密钥: {line}");
+        assert!(line.contains(&key_fingerprint(&key)));
+    }
+}
+

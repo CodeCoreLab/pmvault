@@ -14,11 +14,24 @@
 package vault
 
 import (
+	"errors"
 	"log"
 	"net"
 	"net/http"
 	"strings"
 )
+
+// ErrParentCategoryNotFound 表示分类的 parent_id 指向的父分类不存在，
+// 或不属于当前用户（跨用户越权指向）。
+//
+// 用哨兵错误而不是裸字符串，便于调用方用 errors.Is 判定并映射成对外错误码。
+var ErrParentCategoryNotFound = errors.New("父分类不存在")
+
+// ErrAuditLogUnavailable 表示审计日志写入失败。
+//
+// 审计写入失败**不阻断**正常业务（数据库压力、磁盘满等问题不应让用户无法保存密码），
+// 但必须让调用方感知：调用方据此在响应里带上稳定错误码，而不是静默丢弃。
+var ErrAuditLogUnavailable = errors.New("审计日志写入失败")
 
 // 稳定错误码。语义化命名，一经发布不再改含义（前端可依赖它做分支）。
 const (
@@ -32,7 +45,17 @@ const (
 	CodeNeedUnlock    = "E_NEED_UNLOCK"    // 需要重新解锁主密钥
 	CodeSessionGone   = "E_SESSION_GONE"   // 会话不存在或已过期
 	CodeDecryptFailed = "E_DECRYPT_FAILED" // 解密失败（密钥不匹配或数据损坏）
+	// CodeAuditUnavailable 表示本次操作已完成，但审计日志没能写入。
+	// 业务不因此失败（审计写失败不应让用户无法保存密码），
+	// 但响应里必须带出这个码，让调用方知道这次操作没有被留痕。
+	CodeAuditUnavailable = "E_AUDIT_UNAVAILABLE"
 )
+
+// auditDegradedHeader 是「审计降级」标记在响应头里的名字。
+//
+// writeJSON 依据它把 audit_code / audit_degraded 合并进响应体，
+// 使调用方能感知审计缺失，而不只是服务端日志里留下一行。
+const auditDegradedHeader = "X-Audit-Degraded"
 
 // writeErr 是所有错误响应的唯一出口。
 //

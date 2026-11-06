@@ -8,7 +8,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -651,6 +653,322 @@ func TestPruneLogsKeepsNewestOnCap(t *testing.T) {
 	}
 }
 
+// ---------- 列表 limit 回显一致性（A34） ----------
+
+// TestListEntriesEchoesEffectiveLimit 验证回显的 limit 就是实际生效的 limit。
+//
+// 背景：修复前 handler 直接把请求里的 limit 原样回显，
+// 而 store 内部会把 limit>200 或 limit<=0 钳制成 20。
+// 于是请求 limit=500 时，响应说 limit=500，实际只返回 20 条 ——
+// 前端据此算分页会得出「只有 1 页」的错误结论。
+func TestListEntriesEchoesEffectiveLimit(t *testing.T) {
+	a, s, sid, router := newTestAppWithSession(t)
+	uid := a.sessions[sid].UserID
+
+	// 造 30 条记录，确保 20 条的默认上限真的会被触发
+	for i := 0; i < 30; i++ {
+		if _, err := s.InsertEntry(uid, &Entry{
+			CategoryID: 0, Title: fmt.Sprintf("条目-%02d", i), Cipher: "x",
+		}, ""); err != nil {
+			t.Fatalf("插入记录失败: %v", err)
+		}
+	}
+
+	cases := []struct {
+		query     string
+		wantLimit int
+	}{
+		{"", 20},              // 未传 → 默认
+		{"?limit=0", 20},       // 0 → 默认
+		{"?limit=-5", 20},      // 负数 → 默认
+		{"?limit=500", 20},     // 超上限 → 默认（而非 500）
+		{"?limit=201", 20},     // 刚超上限 → 默认
+		{"?limit=5", 5},        // 合法值 → 原样生效
+		{"?limit=200", 200},    // 上限本身 → 原样生效
+	}
+	for _, tc := range cases {
+		rec := doRequest(router, "GET", "/api/entries"+tc.query, sid, "", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s：状态码应为 200，实际=%d body=%s", tc.query, rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Limit   int `json:"limit"`
+			Total   int `json:"total"`
+			Entries []struct {
+				ID int64 `json:"id"`
+			} `json:"entries"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("%s：响应不是合法 JSON: %v body=%s", tc.query, err, rec.Body.String())
+		}
+		if resp.Limit != tc.wantLimit {
+			t.Errorf("%s：回显 limit 应为 %d，实际=%d", tc.query, tc.wantLimit, resp.Limit)
+		}
+		if len(resp.Entries) > resp.Limit {
+			t.Errorf("%s：返回条数 %d 超过生效 limit %d", tc.query, len(resp.Entries), resp.Limit)
+		}
+		if resp.Limit == 20 && resp.Total > 20 &&
+			len(resp.Entries) != 20 {
+			t.Errorf("%s：生效 limit 为 20 时应实际返回 20 条，实际=%d",
+				tc.query, len(resp.Entries))
+		}
+	}
+}
+
+// TestClampListLimitSingleSource 验证 limit 钳制只有一处真相源。
+//
+// 用 HTTP 层行为反推钳制规则（不直接依赖内部函数），
+// 这样同一份测试在修复前后都能编译，便于做「缺陷版本失败 / 修复后通过」的双向验证。
+func TestClampListLimitSingleSource(t *testing.T) {
+	a, s, sid, router := newTestAppWithSession(t)
+	uid := a.sessions[sid].UserID
+	for i := 0; i < 30; i++ {
+		if _, err := s.InsertEntry(uid, &Entry{
+			CategoryID: 0, Title: fmt.Sprintf("条目-%02d", i), Cipher: "x",
+		}, ""); err != nil {
+			t.Fatalf("插入记录失败: %v", err)
+		}
+	}
+	cases := []struct {
+		query     string
+		wantLimit int
+	}{
+		{"", 20},
+		{"?limit=0", 20},
+		{"?limit=-1", 20},
+		{"?limit=1", 1},
+		{"?limit=20", 20},
+		{"?limit=200", 200},
+		{"?limit=201", 20},
+		{"?limit=5000", 20},
+	}
+	for _, tc := range cases {
+		rec := doRequest(router, "GET", "/api/entries"+tc.query, sid, "", "")
+		var resp struct {
+			Limit int `json:"limit"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("%s：响应不是合法 JSON: %v body=%s", tc.query, err, rec.Body.String())
+		}
+		if resp.Limit != tc.wantLimit {
+			t.Errorf("%s：回显 limit 应为 %d，实际=%d", tc.query, tc.wantLimit, resp.Limit)
+		}
+	}
+}
+
+// ---------- 分类父级校验（A35） ----------
+
+// TestAddCategoryRejectsInvalidParent 验证 parent_id 必须真实存在且属于当前用户。
+//
+// 背景：修复前 AddCategory 完全不校验 parent_id，
+// 可以指向不存在的 id（悬空），也可以指向其他用户的分类（跨用户越权）。
+func TestAddCategoryRejectsInvalidParent(t *testing.T) {
+	s := newTestStore(t)
+	uid1, err := s.CreateUser(&User{Username: "u1", PasswordHash: "x"})
+	if err != nil {
+		t.Fatalf("创建用户失败: %v", err)
+	}
+	uid2, err := s.CreateUser(&User{Username: "u2", PasswordHash: "x"})
+	if err != nil {
+		t.Fatalf("创建用户失败: %v", err)
+	}
+	otherCat, err := s.AddCategory(uid2, "别人的分类", 0, "folder")
+	if err != nil {
+		t.Fatalf("创建他人分类失败: %v", err)
+	}
+
+	// 1) parent_id 不存在
+	if _, err := s.AddCategory(uid1, "子分类", 999999, "folder"); err == nil {
+		t.Error("parent_id 不存在时必须报错")
+	} else if !strings.Contains(err.Error(), "父分类不存在") {
+		t.Errorf("错误信息应说明父分类不存在，实际=%v", err)
+	}
+	// 2) parent_id 属于其他用户（越权）
+	if _, err := s.AddCategory(uid1, "子分类", otherCat, "folder"); err == nil {
+		t.Error("parent_id 越权时必须报错")
+	} else if !strings.Contains(err.Error(), "父分类不存在") {
+		t.Errorf("错误信息应说明父分类不存在，实际=%v", err)
+	}
+	// 3) 合法父级仍应成功
+	root, err := s.AddCategory(uid1, "根分类", 0, "folder")
+	if err != nil {
+		t.Fatalf("创建根分类失败: %v", err)
+	}
+	if _, err := s.AddCategory(uid1, "子分类", root, "folder"); err != nil {
+		t.Fatalf("合法 parent_id 应创建成功: %v", err)
+	}
+	// 4) 校验失败不应留下任何分类记录
+	var cnt int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM categories WHERE user_id=?`, uid1).Scan(&cnt); err != nil {
+		t.Fatalf("统计分类失败: %v", err)
+	}
+	if cnt != 2 {
+		t.Errorf("父级校验失败时不应写入分类，实际条数=%d（期望 2：根分类 + 合法子分类）", cnt)
+	}
+}
+
+// TestCreateCategoryAPIRejectsInvalidParent 验证 HTTP 层把父级问题映射成 404 + 稳定错误码。
+//
+// 不区分「不存在」与「越权」，避免探测其他用户的分类 id。
+func TestCreateCategoryAPIRejectsInvalidParent(t *testing.T) {
+	a, s, sid, router := newTestAppWithSession(t)
+	uid := a.sessions[sid].UserID
+
+	otherUID, err := s.CreateUser(&User{Username: "other", PasswordHash: "x"})
+	if err != nil {
+		t.Fatalf("创建用户失败: %v", err)
+	}
+	otherCat, err := s.AddCategory(otherUID, "别人的分类", 0, "folder")
+	if err != nil {
+		t.Fatalf("创建他人分类失败: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		parentID int64
+	}{
+		{"父级不存在", 999999},
+		{"父级越权", otherCat},
+	} {
+		body := fmt.Sprintf(`{"name":"子分类","parent_id":%d,"icon":"folder"}`, tc.parentID)
+		rec := doRequest(router, "POST", "/api/categories", sid, "test-csrf", body)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s：状态码应为 404，实际=%d body=%s", tc.name, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), CodeNotFound) {
+			t.Errorf("%s：响应应包含错误码 %s，body=%s", tc.name, CodeNotFound, rec.Body.String())
+		}
+	}
+
+	// 合法父级仍应成功
+	root, err := s.AddCategory(uid, "根分类", 0, "folder")
+	if err != nil {
+		t.Fatalf("创建根分类失败: %v", err)
+	}
+	body := fmt.Sprintf(`{"name":"子分类","parent_id":%d,"icon":"folder"}`, root)
+	rec := doRequest(router, "POST", "/api/categories", sid, "test-csrf", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("合法父级应创建成功，实际=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCategoryChildrenIDsTerminatesOnCycle 验证 parent_id 成环时 BFS 不会无限循环。
+//
+// 背景：S03 提到的衍生风险 —— 历史数据或手工改库可能让 parent_id 成环，
+// 修复前的 BFS 没有 visited 集合，遇到环会无限循环（请求挂死、内存暴涨）。
+func TestCategoryChildrenIDsTerminatesOnCycle(t *testing.T) {
+	s := newTestStore(t)
+	uid, err := s.CreateUser(&User{Username: "u1", PasswordHash: "x"})
+	if err != nil {
+		t.Fatalf("创建用户失败: %v", err)
+	}
+	c1, err := s.AddCategory(uid, "C1", 0, "folder")
+	if err != nil {
+		t.Fatalf("创建分类失败: %v", err)
+	}
+	c2, err := s.AddCategory(uid, "C2", c1, "folder")
+	if err != nil {
+		t.Fatalf("创建分类失败: %v", err)
+	}
+	// 人为造环：C1 的父级改成 C2（C2 的父级是 C1）
+	if _, err := s.db.Exec(`UPDATE categories SET parent_id=? WHERE id=?`, c2, c1); err != nil {
+		t.Fatalf("构造环失败: %v", err)
+	}
+
+	done := make(chan struct{})
+	var ids []int64
+	var gotErr error
+	go func() {
+		defer close(done)
+		ids, gotErr = s.CategoryChildrenIDs(uid, c1)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("parent_id 成环时 CategoryChildrenIDs 未在 5 秒内返回（无限循环）")
+	}
+	if gotErr != nil {
+		t.Fatalf("CategoryChildrenIDs 返回错误: %v", gotErr)
+	}
+	seen := map[int64]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			t.Fatalf("返回值含重复 id %d（成环未去重）: %v", id, ids)
+		}
+		seen[id] = true
+	}
+	if !seen[c1] || !seen[c2] {
+		t.Errorf("返回值应包含环上的两个分类，实际=%v", ids)
+	}
+}
+
+// ---------- 审计日志失败可感知（A36） ----------
+
+// TestAuditFailureIsSurfacedToCaller 验证审计写入失败时调用方能感知，
+// 且**不会**让正常业务失败。
+//
+// 响应体必须带上稳定错误码 E_AUDIT_UNAVAILABLE 与 audit_degraded 标记，
+// 响应头也带 X-Audit-Degraded —— 不能只有服务端日志里的一行字。
+//
+// 注意：这里刻意用字面量而不是包内常量，
+// 这样同一份测试在修复前后都能编译，便于做「缺陷版本失败 / 修复后通过」的双向验证。
+func TestAuditFailureIsSurfacedToCaller(t *testing.T) {
+	a, s, sid, router := newTestAppWithSession(t)
+	uid := a.sessions[sid].UserID
+
+	catID, err := s.AddCategory(uid, "待删分类", 0, "folder")
+	if err != nil {
+		t.Fatalf("创建分类失败: %v", err)
+	}
+	// 让审计写入失败
+	if _, err := s.db.Exec(`DROP TABLE logs`); err != nil {
+		t.Fatalf("破坏 logs 表失败: %v", err)
+	}
+
+	rec := doRequest(router, "DELETE", fmt.Sprintf("/api/categories/%d", catID), sid, "test-csrf", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("审计故障不应阻断正常业务，状态码=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v body=%s", err, rec.Body.String())
+	}
+	if ok, _ := resp["ok"].(bool); !ok {
+		t.Errorf("业务本身应成功，body=%s", rec.Body.String())
+	}
+	if resp["audit_code"] != "E_AUDIT_UNAVAILABLE" {
+		t.Errorf("响应体应带 audit_code=E_AUDIT_UNAVAILABLE，body=%s", rec.Body.String())
+	}
+	if degraded, _ := resp["audit_degraded"].(bool); !degraded {
+		t.Errorf("响应体应带 audit_degraded=true，body=%s", rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Audit-Degraded"); got != "E_AUDIT_UNAVAILABLE" {
+		t.Errorf("响应头 X-Audit-Degraded 应为 E_AUDIT_UNAVAILABLE，实际=%q", got)
+	}
+}
+
+// TestAuditSuccessHasNoDegradedMarker 验证审计正常时不带降级标记（不误报）。
+func TestAuditSuccessHasNoDegradedMarker(t *testing.T) {
+	a, s, sid, router := newTestAppWithSession(t)
+	uid := a.sessions[sid].UserID
+
+	catID, err := s.AddCategory(uid, "待删分类", 0, "folder")
+	if err != nil {
+		t.Fatalf("创建分类失败: %v", err)
+	}
+	rec := doRequest(router, "DELETE", fmt.Sprintf("/api/categories/%d", catID), sid, "test-csrf", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码应为 200，实际=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "audit_degraded") {
+		t.Errorf("审计正常时不应带 audit_degraded 标记，body=%s", rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Audit-Degraded"); got != "" {
+		t.Errorf("审计正常时不应带 X-Audit-Degraded 响应头，实际=%q", got)
+	}
+}
+
 // newTestStore 建一个临时 SQLite 库用于测试（调用方负责 Close）。
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
@@ -661,4 +979,46 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+// newTestAppWithSession 建一个带已登录会话的 App，并返回 router 与会话 id。
+//
+// 不走注册/登录流程（那需要密码策略与 KDF 参数），直接注入会话，
+// 让测试聚焦在目标逻辑上。
+func newTestAppWithSession(t *testing.T) (*App, *Store, string, http.Handler) {
+	t.Helper()
+	s := newTestStore(t)
+	uid, err := s.CreateUser(&User{Username: "tester", PasswordHash: "x"})
+	if err != nil {
+		t.Fatalf("创建测试用户失败: %v", err)
+	}
+	a := &App{
+		store:    s,
+		sessions: make(map[string]*session),
+		csrf:     make(map[string]string),
+		limiter:  NewLimiter(),
+		quitCh:   make(chan struct{}),
+	}
+	const sid = "test-sid"
+	a.sessions[sid] = &session{UserID: uid, Username: "tester", Created: time.Now()}
+	a.csrf[sid] = "test-csrf"
+	return a, s, sid, a.Router()
+}
+
+// doRequest 发一个带会话 Cookie（写操作另带 CSRF 头）的请求。
+func doRequest(h http.Handler, method, target, sid, csrf, body string) *httptest.ResponseRecorder {
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, target, nil)
+	} else {
+		r = httptest.NewRequest(method, target, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+	}
+	r.AddCookie(&http.Cookie{Name: "sid", Value: sid})
+	if csrf != "" {
+		r.Header.Set("X-CSRF-Token", csrf)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	return rec
 }

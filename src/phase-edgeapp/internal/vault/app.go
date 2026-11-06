@@ -275,7 +275,7 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("POST /api/backups", a.handleCreateBackup)
 	mux.HandleFunc("POST /api/shutdown", a.handleShutdown)
 
-	return a.recoverPanic(a.securityHeaders(a.csrfGuard(mux)))
+	return a.recoverPanic(a.securityHeaders(a.csrfGuard(a.withAuditState(mux))))
 }
 
 // recoverPanic 兜住 handler 内的 panic。
@@ -553,7 +553,7 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if sess != nil {
 		sess.unlock(keyB64)
 	}
-	a.store.Log(id, "register", "系统初始化")
+	a.audit(w, id, "register", "系统初始化")
 	writeJSON(w, 200, map[string]any{"ok": true, "csrf": token, "unlocked": true})
 }
 
@@ -616,12 +616,12 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		logf("重置登录失败计数出错 user=%d: %v", u.ID, err)
 	}
 	_, token := a.newSession(w, u.ID, u.Username)
-	a.store.Log(u.ID, "login", "用户登录")
+	a.audit(w, u.ID, "login", "用户登录")
 
 	// 登录时自动备份并轮转（备份含全部密文，必须限制数量）
 	if name, size, err := a.store.Backup("backup"); err == nil {
 		a.store.RotateBackups("backup", 30)
-		a.store.Log(u.ID, "auto_backup", fmt.Sprintf("登录时自动备份: %s (%s)", name, humanSize(size)))
+		a.audit(w, u.ID, "auto_backup", fmt.Sprintf("登录时自动备份: %s (%s)", name, humanSize(size)))
 	}
 
 	writeJSON(w, 200, map[string]any{"ok": true, "csrf": token, "unlocked": false, "username": u.Username})
@@ -704,7 +704,7 @@ func (a *App) handleUnlock(w http.ResponseWriter, r *http.Request) {
 	//
 	// 【修复后】写入 logs 表。失败解锁同样记录（但只记成功路径，
 	// 失败路径的记录由现有登录失败计数机制承担，避免日志被暴力破解刷爆）。
-	a.store.Log(s.UserID, "unlock", "主密钥解锁")
+	a.audit(w, s.UserID, "unlock", "主密钥解锁")
 
 	writeJSON(w, 200, map[string]any{"ok": true, "unlocked": true})
 }
@@ -762,6 +762,11 @@ func (a *App) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	catID, _ := strconv.ParseInt(q.Get("category_id"), 10, 64)
 	trash := q.Get("trash") == "1"
 
+	// limit 的生效值必须与 store 实际用于 LIMIT 的值一致，
+	// 否则回显的 limit 会骗客户端去算分页（例：请求 limit=500，
+	// 实际按 20 取，但回显 500，客户端会以为只有 1 页）。
+	limit = clampListLimit(limit)
+
 	items, total, err := a.store.ListEntries(s.UserID, ListOptions{
 		CategoryID: catID, Search: q.Get("search"), Page: page, Limit: limit, ShowTrash: trash,
 	})
@@ -772,9 +777,6 @@ func (a *App) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	views := make([]entryView, 0, len(items))
 	for _, e := range items {
 		views = append(views, toView(e))
-	}
-	if limit <= 0 {
-		limit = 20
 	}
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "entries": views, "total": total,
@@ -817,7 +819,7 @@ func (a *App) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		writeInternalErr(w, 500, err)
 		return
 	}
-	a.store.Log(s.UserID, "add_entry", "新增记录: "+req.Title)
+	a.audit(w, s.UserID, "add_entry", "新增记录: "+req.Title)
 	writeJSON(w, 200, map[string]any{"ok": true, "id": id})
 }
 
@@ -859,7 +861,7 @@ func (a *App) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		writeInternalErr(w, 500, err)
 		return
 	}
-	a.store.Log(s.UserID, "update_entry", fmt.Sprintf("更新记录: %s (ID: %d)", req.Title, id))
+	a.audit(w, s.UserID, "update_entry", fmt.Sprintf("更新记录: %s (ID: %d)", req.Title, id))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -883,7 +885,7 @@ func (a *App) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 			writeInternalErr(w, 500, err)
 			return
 		}
-		a.store.Log(s.UserID, "purge_entry", fmt.Sprintf("永久删除 ID: %d", id))
+		a.audit(w, s.UserID, "purge_entry", fmt.Sprintf("永久删除 ID: %d", id))
 		writeJSON(w, 200, map[string]any{"ok": true})
 		return
 	}
@@ -891,7 +893,7 @@ func (a *App) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		writeInternalErr(w, 500, err)
 		return
 	}
-	a.store.Log(s.UserID, "delete_entry", fmt.Sprintf("移入回收站 ID: %d", id))
+	a.audit(w, s.UserID, "delete_entry", fmt.Sprintf("移入回收站 ID: %d", id))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -943,7 +945,7 @@ func (a *App) handleRevealEntry(w http.ResponseWriter, r *http.Request) {
 	// 注意：**绝不写入明文密码本身** —— 日志表是明文存储的，
 	// 把密码写进去等于给攻击者准备了第二个明文泄漏点。
 	// 只记录「看了哪条记录」（标题 + ID），足以定位泄密行为，又不引入新的泄漏面。
-	a.store.Log(s.UserID, "reveal_entry", fmt.Sprintf("查看明文密码: %s (ID: %d)", e.Title, id))
+	a.audit(w, s.UserID, "reveal_entry", fmt.Sprintf("查看明文密码: %s (ID: %d)", e.Title, id))
 	writeJSON(w, 200, map[string]any{"ok": true, "password": plain})
 }
 
@@ -989,6 +991,12 @@ func (a *App) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := a.store.AddCategory(s.UserID, name, req.ParentID, req.Icon)
 	if err != nil {
+		// 父分类不存在或不属于当前用户：统一按「不存在」返回，
+		// 不区分「不存在」与「越权」，避免探测他用户分类 id。
+		if errors.Is(err, ErrParentCategoryNotFound) {
+			writeErr(w, 404, CodeNotFound, "父分类不存在", nil)
+			return
+		}
 		writeInternalErr(w, 500, err)
 		return
 	}
@@ -1035,7 +1043,7 @@ func (a *App) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, CodeConflict, err.Error(), err)
 		return
 	}
-	a.store.Log(s.UserID, "delete_category", fmt.Sprintf("删除分类 ID: %d", id))
+	a.audit(w, s.UserID, "delete_category", fmt.Sprintf("删除分类 ID: %d", id))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -1127,7 +1135,7 @@ func (a *App) handleChangeLoginPassword(w http.ResponseWriter, r *http.Request) 
 		writeInternalErr(w, 500, err)
 		return
 	}
-	a.store.Log(s.UserID, "change_password", "修改登录密码")
+	a.audit(w, s.UserID, "change_password", "修改登录密码")
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -1223,7 +1231,7 @@ func (a *App) handleChangeMasterPassword(w http.ResponseWriter, r *http.Request)
 	if hadRecovery {
 		msg += "。原恢复密钥已失效，请重新生成"
 	}
-	a.store.Log(s.UserID, "change_master_key", msg)
+	a.audit(w, s.UserID, "change_master_key", msg)
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "message": msg, "reencrypted": reencrypted,
 		"recovery_invalidated": hadRecovery,
@@ -1253,7 +1261,7 @@ func (a *App) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.store.RotateBackups("backup", 30)
-	a.store.Log(s.UserID, "backup_database", "手动备份: "+name)
+	a.audit(w, s.UserID, "backup_database", "手动备份: "+name)
 	writeJSON(w, 200, map[string]any{"ok": true, "filename": name, "size": size, "size_formatted": humanSize(size)})
 }
 
@@ -1270,6 +1278,50 @@ func (a *App) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// ---------- 审计 ----------
+
+// auditRW 承载「本次请求的审计写入是否降级」的状态。
+//
+// 审计写入失败时业务本身照常完成（不能因为 logs 表故障就让用户无法保存密码），
+// 但绝不能静默丢弃 —— 状态由本类型带到响应里，让调用方明确感知。
+type auditRW struct {
+	http.ResponseWriter
+	code string
+}
+
+func (a *auditRW) markAuditDegraded(code string) { a.code = code }
+
+func (a *auditRW) auditCode() string { return a.code }
+
+// Unwrap 让 http.ResponseController 能取到底层 writer（如 Flush）。
+func (a *auditRW) Unwrap() http.ResponseWriter { return a.ResponseWriter }
+
+// withAuditState 给每个响应套上 auditRW，使审计降级状态能随响应返回。
+func (a *App) withAuditState(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&auditRW{ResponseWriter: w}, r)
+	})
+}
+
+// audit 写一条审计日志。
+//
+// 【修复前】store.Log 内部只记服务端日志、返回 void，调用方完全无感 ——
+// 审计被静默丢弃，接口仍返回成功。
+// 【修复后】写入失败时：服务端日志保留原始错误，响应里带上稳定错误码
+// E_AUDIT_UNAVAILABLE（降级但不阻断业务），调用方可据此判断本次操作未被留痕。
+func (a *App) audit(w http.ResponseWriter, userID int64, action, details string) {
+	err := a.store.Log(userID, action, details)
+	if err == nil {
+		return
+	}
+	logf("写入操作日志失败(action=%s): %v", action, err)
+	if aw, ok := w.(*auditRW); ok {
+		aw.markAuditDegraded(CodeAuditUnavailable)
+	}
+	// 响应头必须在 WriteHeader 之前写入；audit 调用点都在 writeJSON 之前，成立。
+	w.Header().Set(auditDegradedHeader, CodeAuditUnavailable)
+}
+
 // ---------- 辅助 ----------
 
 func max(a, b int) int {
@@ -1281,6 +1333,15 @@ func max(a, b int) int {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// 审计降级时把稳定错误码带进响应体（成功响应统一是 map[string]any）。
+	if status < 400 {
+		if aw, ok := w.(*auditRW); ok && aw.code != "" {
+			if m, ok2 := v.(map[string]any); ok2 {
+				m["audit_code"] = aw.code
+				m["audit_degraded"] = true
+			}
+		}
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

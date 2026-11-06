@@ -82,7 +82,7 @@ CIPHER=$(sqlite3 "$DB" "select cipher from passwords limit 1;")
 export RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 cd /opt/lab/rustproto
 echo "--- Rust 解 PHP 密文 ---"
-VAULT_SALT="$SALT" VAULT_PW='Master5678!xyz' ./target/release/vault_proto "$CIPHER" 2>&1 | grep -E '格式嗅探|派生的主密钥|解密结果|回环|Argon2id'
+VAULT_SALT="$SALT" VAULT_PW='Master5678!xyz' ./target/release/vault_proto "$CIPHER" 2>&1 | grep -E '格式嗅探|主密钥指纹|解密结果|回环|Argon2id'
 PHPMK=$(php -r 'require "/opt/lab/pm2.0/includes/config.php"; require "/opt/lab/pm2.0/includes/security.php";
 $k = Security::deriveKey($argv[1], base64_decode($argv[2]), "pbkdf2", ["iterations"=>600000]);
 echo $k["key"];' -- 'Master5678!xyz' "$SALT" 2>&1)
