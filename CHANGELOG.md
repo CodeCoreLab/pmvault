@@ -7,53 +7,36 @@
 
 ## [未发布]
 
+## [1.0.1] - 2026-11-06
 ### 新增
 
 - **引入版本权威源 `VERSION`**（仓库根，单行 `MAJOR.MINOR.PATCH`）：
-  此前本仓没有任何版本常量，产物无从得知自身版本。本仓有两个独立 Go module
-  （`vaultd` / `vaultgui`），若把版本号写进两处源码必漂移，故只在 `VERSION`
-  存一份，由两个打包脚本在编译期经 `ldflags -X` 注入
 - **两个程序新增 `--version`**：`vaultd --version` / `vaultgui --version`
-  直接打印版本号后退出。该分支先于 `initConsole()`、建库、起服务与单实例
-  互斥返回 —— 否则「查版本」会顺带创建数据目录并占用互斥量
 - 启动日志打印版本号，便于从日志回溯运行的是哪个版本
 - 17 项单元测试，覆盖会话并发、闲置上锁、错误码收敛、限流窗口、
-  锁定时间解析、加密解密往返与密码强度校验
-
-### 修复
-
-- **`phase-a/脚本-打包.py` 的 `SRC` 路径错指**：原 `SRC = os.path.dirname(_HERE)`
-  指向 `src/` 而非 `src/phase-a/`，导致 `go build ./cmd/vaultd`、图标与
-  `README-桌面版.md` 三处路径全错，脚本从未真正跑通编译
-- **`phase-a/脚本-打包.py` 的失效 ldflag**：原
-  `-X main.buildInfo=desktop-1.0.0` 指向 `main` 包中不存在的变量。
-  Go 链接器对不存在的 `-X` 目标**静默忽略**，编译成功但注入无效，
-  是「看似有版本、实则产物无版本」的隐形漂移源。已删除，改为注入真实存在的
-  `vaultd/internal/vault.Version`
-- **`phase-edgeapp/脚本-打包.py` 缺构建步骤**：原先只打包、要求 exe 已预构建，
-  版本号无处注入。现补齐 `go build` 并统一从 `VERSION` 取值注入
-  `vaultgui/internal/vault.Version`
-- **前端时间显示偏差**：`fmtTime` 原先把后端返回的本地时间一律当 UTC 解析，
-  东八区用户看到的时间早 8 小时。改为按字符串内的时区标记精确换算，
-  无偏移的旧数据按 UTC 兜底
-- **登录限流绕过**：限流改用真实 `r.RemoteAddr`，不再采信可伪造的
-  `X-Forwarded-For`；用户名归一化为小写去空白，防止大小写变体绕过
 
 ### 变更
 
 - **统一错误出口**：原先有 30 处直接把 `err.Error()` 写进 HTTP 响应，
-  会泄露 SQLite 表结构名与本机路径、操作系统细节。改为按稳定错误码收敛
-  （`E_INTERNAL` / `E_NOT_FOUND` / `E_CONFLICT` / `E_VALIDATION` /
-  `E_UNAUTHORIZED` / `E_LOCKED` / `E_RATE_LIMIT` / `E_NEED_UNLOCK` /
-  `E_SESSION_GONE` / `E_DECRYPT_FAILED`），底层错误仅写入日志
 - **会话并发安全**：session 字段访问改由互斥锁保护，消除数据竞争
 - **滑动窗口闲置上锁**：每次成功的解锁态操作刷新闲置计时，取代原先
-  「解锁后固定 15 分钟必锁」的行为
 - **时间存储统一 UTC**：账户锁定时间改用 RFC3339 格式存取，
-  修复非 UTC 时区下「被锁 15 分钟实际锁 23 小时」的问题；
-  `nowStr()` 统一为 RFC3339，消除 Go 写本地时间与 SQLite 写 UTC 的混用
 - **备份轮转失败留痕**：删除旧备份出错时写日志，不再静默吞错
 
+### 修复
+
+- **列表接口回显的 `limit` 与实际生效值一致**
+- **创建分类时校验 `parent_id` 的存在性与归属**
+- **审计写入失败不再被静默丢弃**：改为降级并返回稳定错误码（`E_AUDIT_UNAVAILABLE`），响应带 `audit_degraded` 标记与 `X-Audit-Degraded` 头
+- **`phase-a/脚本-打包.py` 的 `SRC` 路径错指**：原 `SRC = os.path.dirname(_HERE)`
+- **`phase-a/脚本-打包.py` 的失效 ldflag**：原
+- **`phase-edgeapp/脚本-打包.py` 缺构建步骤**：原先只打包、要求 exe 已预构建，
+- **前端时间显示偏差**：`fmtTime` 原先把后端返回的本地时间一律当 UTC 解析，
+- **登录限流绕过**：限流改用真实 `r.RemoteAddr`，不再采信可伪造的
+
+### 安全
+
+- **原型工具不再把派生主密钥打印到 stdout**：改为只输出 sha256 前 8 位指纹
 ## [1.0.0] - 2026-10-22
 
 ### 新增
